@@ -1,0 +1,42 @@
+/* Not Found Styles */
+.notfound-page {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 70vh;
+}
+
+.notfound-content {
+  text-align: center;
+
+  h1 {
+    font-size: 6rem;
+    font-weight: 700;
+    color: #667eea;
+    margin: 0;
+    line-height: 1;
+  }
+
+  p {
+    font-size: 1.5rem;
+    color: #1e293b;
+    margin: 1rem 0 0.5rem 0;
+
+    &.description {
+      font-size: 1rem;
+      color: #64748b;
+    }
+  }
+
+  a {
+    display: inline-block;
+    margin-top: 1.5rem;
+    text-decoration: none;
+  }
+}
+
+@media (max-width: 480px) {
+  .notfound-content h1 {
+    font-size: 3rem;
+  }
+}
