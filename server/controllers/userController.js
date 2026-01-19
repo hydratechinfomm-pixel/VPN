@@ -96,11 +96,13 @@ exports.updateUser = async (req, res) => {
     }
 
     // Staff (moderator) cannot update admin users or set role to admin
-    if (req.user && req.user.role === constants.ROLES.MODERATOR) {
-      if (user.role === constants.ROLES.ADMIN) {
+    const reqRole = req.user?.role?.toLowerCase();
+    const targetRole = user.role?.toLowerCase();
+    if (req.user && reqRole === constants.ROLES.MODERATOR) {
+      if (targetRole === constants.ROLES.ADMIN) {
         return res.status(403).json({ error: 'Staff cannot modify admin users' });
       }
-      if (role === constants.ROLES.ADMIN) {
+      if (role?.toLowerCase() === constants.ROLES.ADMIN) {
         return res.status(403).json({ error: 'Staff cannot assign admin role' });
       }
     }
@@ -143,7 +145,9 @@ exports.deleteUser = async (req, res) => {
     }
 
     // Staff (moderator) cannot delete admin users
-    if (req.user && req.user.role === constants.ROLES.MODERATOR && user.role === constants.ROLES.ADMIN) {
+    const reqRole = req.user?.role?.toLowerCase();
+    const targetRole = user.role?.toLowerCase();
+    if (req.user && reqRole === constants.ROLES.MODERATOR && targetRole === constants.ROLES.ADMIN) {
       return res.status(403).json({ error: 'Staff cannot delete admin users' });
     }
 

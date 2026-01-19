@@ -30,7 +30,8 @@ exports.authorizeAdmin = async (req, res, next) => {
     const User = require('../models/User');
     const user = await User.findById(req.userId);
 
-    if (!user || user.role !== constants.ROLES.ADMIN) {
+    const role = user.role?.toLowerCase();
+    if (!user || role !== constants.ROLES.ADMIN) {
       await logActivity(req.userId, 'ADMIN_ACCESS_DENIED', 'USER', null, false, 'Unauthorized admin access attempt');
       return res.status(403).json({ error: 'Admin access required' });
     }
@@ -51,7 +52,8 @@ exports.authorizePanelAdmin = async (req, res, next) => {
     const User = require('../models/User');
     const user = await User.findById(req.userId);
 
-    if (!user || (user.role !== constants.ROLES.ADMIN && user.role !== constants.ROLES.MODERATOR)) {
+    const role = user.role?.toLowerCase();
+    if (!user || (role !== constants.ROLES.ADMIN && role !== constants.ROLES.MODERATOR)) {
       await logActivity(req.userId, 'PANEL_ADMIN_ACCESS_DENIED', 'USER', null, false, 'Panel admin or staff access required');
       return res.status(403).json({ error: 'Panel admin or staff access required' });
     }
@@ -75,7 +77,7 @@ exports.authorizeResourceAccess = async (req, res, next) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    if (user.role === constants.ROLES.ADMIN) {
+    if (user.role?.toLowerCase() === constants.ROLES.ADMIN) {
       req.user = user;
       return next();
     }
