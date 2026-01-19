@@ -24,8 +24,10 @@ const AccessKeysPage = () => {
         accessKeysAPI.getAll(selectedServerId || undefined),
         serversAPI.getAll(),
       ]);
-      setKeys(keysResponse);
-      setServers(serversResponse);
+      const keysList = Array.isArray(keysResponse) ? keysResponse : keysResponse?.data || [];
+      const serversList = Array.isArray(serversResponse) ? serversResponse : serversResponse?.servers || [];
+      setKeys(keysList);
+      setServers(serversList);
     } catch (err) {
       setError('Failed to load data');
       console.error(err);

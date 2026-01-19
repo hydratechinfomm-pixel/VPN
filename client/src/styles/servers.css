@@ -91,6 +91,128 @@
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
+.server-list-advanced .table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.server-list-advanced .table thead {
+  background-color: #f8f9fa;
+}
+
+.server-list-advanced .table th {
+  padding: 1rem;
+  text-align: left;
+  font-weight: 600;
+  color: #374151;
+  border-bottom: 2px solid #e5e7eb;
+}
+
+.server-list-advanced .table td {
+  padding: 1rem;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.server-list-advanced .table tbody tr:hover {
+  background-color: #f9fafb;
+}
+
+.server-list-advanced .badge {
+  display: inline-block;
+  padding: 0.25rem 0.75rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.server-list-advanced .badge.active {
+  background-color: #d1fae5;
+  color: #065f46;
+}
+
+.server-list-advanced .badge.inactive {
+  background-color: #fee2e2;
+  color: #7f1d1d;
+}
+
+.server-list-advanced .badge.healthy {
+  background-color: #d1fae5;
+  color: #065f46;
+}
+
+.server-list-advanced .badge.unhealthy {
+  background-color: #fee2e2;
+  color: #7f1d1d;
+}
+
+.server-list-advanced .badge.unknown {
+  background-color: #e5e7eb;
+  color: #6b7280;
+}
+
+.server-list-advanced .health-details {
+  margin-top: 0.25rem;
+  font-size: 0.75rem;
+  color: #6b7280;
+}
+
+.server-list-advanced .actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.server-list-advanced .btn-small {
+  padding: 0.375rem 0.75rem;
+  font-size: 0.875rem;
+  border-radius: 0.375rem;
+  border: none;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-weight: 500;
+}
+
+.server-list-advanced .btn-small.btn-success {
+  background-color: #10b981;
+  color: white;
+}
+
+.server-list-advanced .btn-small.btn-success:hover:not(:disabled) {
+  background-color: #059669;
+}
+
+.server-list-advanced .btn-small.btn-success:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.server-list-advanced .btn-small.btn-primary {
+  background-color: #3b82f6;
+  color: white;
+}
+
+.server-list-advanced .btn-small.btn-primary:hover {
+  background-color: #2563eb;
+}
+
+.server-list-advanced .btn-small.btn-danger {
+  background-color: #ef4444;
+  color: white;
+}
+
+.server-list-advanced .btn-small.btn-danger:hover {
+  background-color: #dc2626;
+}
+
+.server-list-advanced .monospace {
+  font-family: 'Courier New', monospace;
+  font-size: 0.9rem;
+}
+
+.server-list-advanced .font-bold {
+  font-weight: 600;
+}
+
 @keyframes fadeIn {
   from {
     opacity: 0;

@@ -31,7 +31,9 @@ app.get('/health', (req, res) => {
 
 // API Routes
 app.use('/api/auth', require('./routes/authRoutes'));
-app.use('/api/access-keys', require('./routes/accessKeyRoutes'));
+app.use('/api/access-keys', require('./routes/accessKeyRoutes')); // Keep for backward compatibility
+app.use('/api/devices', require('./routes/deviceRoutes'));
+app.use('/api/plans', require('./routes/planRoutes'));
 app.use('/api/servers', require('./routes/serverRoutes'));
 app.use('/api/users', require('./routes/userRoutes'));
 

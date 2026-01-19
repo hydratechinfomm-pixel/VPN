@@ -19,7 +19,8 @@ const ServersPage = () => {
     try {
       setLoading(true);
       const response = await serversAPI.getAll();
-      setServers(response);
+      const serversList = Array.isArray(response) ? response : response?.servers || [];
+      setServers(serversList);
     } catch (err) {
       setError('Failed to load servers');
       console.error(err);
@@ -57,13 +58,41 @@ const ServersPage = () => {
           prev.map((s) => (s._id === editingServer._id ? { ...s, ...formData } : s))
         );
       } else {
-        const newServer = await serversAPI.create(formData);
+        const response = await serversAPI.create(formData);
+        const newServer = response.server || response;
         setServers((prev) => [...prev, newServer]);
       }
       setShowForm(false);
       setEditingServer(null);
+      fetchServers(); // Refresh to get updated data
     } catch (err) {
       setError(editingServer ? 'Failed to update server' : 'Failed to create server');
+      console.error(err);
+    }
+  };
+
+  const handleHealthCheck = async (serverId) => {
+    try {
+      const result = await serversAPI.healthCheck(serverId);
+      // Update server health status in the list
+      setServers((prev) =>
+        prev.map((s) =>
+          s._id === serverId
+            ? {
+                ...s,
+                stats: {
+                  ...s.stats,
+                  isHealthy: result.healthy,
+                  lastHealthCheck: new Date(),
+                },
+              }
+            : s
+        )
+      );
+      return result;
+    } catch (err) {
+      console.error('Health check error:', err);
+      throw err;
     }
   };
 
@@ -92,6 +121,7 @@ const ServersPage = () => {
         onEdit={handleEditServer}
         onDelete={handleDeleteServer}
         onRefresh={fetchServers}
+        onHealthCheck={handleHealthCheck}
       />
     </div>
   );

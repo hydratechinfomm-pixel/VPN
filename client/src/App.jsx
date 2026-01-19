@@ -7,6 +7,8 @@ import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import DashboardPage from './pages/DashboardPage';
 import AccessKeysPage from './pages/AccessKeysPage';
+import DevicesPage from './pages/DevicesPage';
+import PlansPage from './pages/PlansPage';
 import ServersPage from './pages/ServersPage';
 import UsersPage from './pages/UsersPage';
 import ProfilePage from './pages/ProfilePage';
@@ -29,8 +31,13 @@ const ProtectedRoute = ({ children, requiredRole }) => {
     return <Navigate to="/login" />;
   }
 
-  if (requiredRole && user?.role !== requiredRole) {
-    return <Navigate to="/dashboard" />;
+  if (requiredRole) {
+    // Case-insensitive role check
+    const userRole = user?.role?.toLowerCase();
+    const requiredRoleLower = requiredRole.toLowerCase();
+    if (userRole !== requiredRoleLower) {
+      return <Navigate to="/dashboard" />;
+    }
   }
 
   return children;
@@ -75,6 +82,15 @@ function App() {
           />
 
           <Route
+            path="/devices"
+            element={
+              <ProtectedRoute>
+                <AppLayout><DevicesPage /></AppLayout>
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
             path="/access-keys"
             element={
               <ProtectedRoute>
@@ -98,6 +114,15 @@ function App() {
             element={
               <ProtectedRoute requiredRole="Admin">
                 <AppLayout><ServersPage /></AppLayout>
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/plans"
+            element={
+              <ProtectedRoute requiredRole="Admin">
+                <AppLayout><PlansPage /></AppLayout>
               </ProtectedRoute>
             }
           />

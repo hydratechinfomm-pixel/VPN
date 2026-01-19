@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../context/AuthContext';
-import { serversAPI } from '../api';
+import { serversAPI, devicesAPI } from '../api';
 import DashboardStats from '../components/DashboardStats';
 import ServerList from '../components/ServerList';
 import '../styles/dashboard.css';
@@ -8,7 +8,14 @@ import '../styles/dashboard.css';
 const DashboardPage = () => {
   const { user } = useAuth();
   const [servers, setServers] = useState([]);
-  const [stats, setStats] = useState({ totalServers: 0, activeServers: 0, totalKeys: 0 });
+  const [devices, setDevices] = useState([]);
+  const [stats, setStats] = useState({ 
+    totalServers: 0, 
+    activeServers: 0, 
+    totalDevices: 0,
+    onlineDevices: 0,
+    totalUsage: 0 
+  });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
@@ -19,15 +26,31 @@ const DashboardPage = () => {
   const fetchData = async () => {
     try {
       setLoading(true);
-      const response = await serversAPI.getAll();
-      setServers(response);
+      const [serversResponse, devicesResponse] = await Promise.all([
+        serversAPI.getAll(),
+        devicesAPI.getAll(),
+      ]);
+      
+      // Handle both direct array and wrapped response
+      const serversList = Array.isArray(serversResponse) ? serversResponse : serversResponse?.servers || [];
+      const devicesList = Array.isArray(devicesResponse) ? devicesResponse : devicesResponse?.devices || [];
+      
+      setServers(serversList);
+      setDevices(devicesList);
       
       // Calculate stats
-      const activeCount = response.filter((s) => s.isActive).length;
+      const activeCount = serversList.filter((s) => s.isActive).length;
+      const onlineDevices = devicesList.filter((d) => d.connectivity?.isConnected && d.isEnabled).length;
+      const totalUsage = devicesList.reduce((sum, d) => {
+        return sum + (d.usage?.bytesSent || 0) + (d.usage?.bytesReceived || 0);
+      }, 0);
+      
       setStats({
-        totalServers: response.length,
+        totalServers: serversList.length,
         activeServers: activeCount,
-        totalKeys: response.reduce((sum, s) => sum + (s.accessKeys?.length || 0), 0),
+        totalDevices: devicesList.length,
+        onlineDevices,
+        totalUsage,
       });
     } catch (err) {
       setError('Failed to load dashboard data');

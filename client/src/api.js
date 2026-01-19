@@ -43,7 +43,7 @@ export const authAPI = {
   refreshToken: (refreshToken) => api.post('/auth/refresh-token', { refreshToken }),
 };
 
-// Access Keys API
+// Access Keys API (kept for backward compatibility)
 export const accessKeysAPI = {
   getAll: (serverId, status) =>
     api.get('/access-keys', { params: { serverId, status } }),
@@ -53,6 +53,34 @@ export const accessKeysAPI = {
   delete: (keyId) => api.delete(`/access-keys/${keyId}`),
   toggleStatus: (keyId, status) =>
     api.patch(`/access-keys/${keyId}/status`, { status }),
+};
+
+// Devices API
+export const devicesAPI = {
+  getAll: (serverId, status) =>
+    api.get('/devices', { params: { serverId, status } }),
+  getOne: (deviceId) => api.get(`/devices/${deviceId}`),
+  create: (deviceData) => api.post('/devices', deviceData),
+  update: (deviceId, deviceData) => api.put(`/devices/${deviceId}`, deviceData),
+  delete: (deviceId) => api.delete(`/devices/${deviceId}`),
+  toggleStatus: (deviceId, status, isEnabled) =>
+    api.patch(`/devices/${deviceId}/status`, { status, isEnabled }),
+  getConfig: (deviceId) => api.get(`/devices/${deviceId}/config`, { responseType: 'blob' }),
+  getQR: (deviceId) => api.get(`/devices/${deviceId}/qr`),
+  disconnect: (deviceId) => api.post(`/devices/${deviceId}/disconnect`),
+};
+
+// Plans API
+export const plansAPI = {
+  getAll: (isActive) =>
+    api.get('/plans', { params: { isActive } }),
+  getOne: (planId) => api.get(`/plans/${planId}`),
+  create: (planData) => api.post('/plans', planData),
+  update: (planId, planData) => api.put(`/plans/${planId}`, planData),
+  delete: (planId) => api.delete(`/plans/${planId}`),
+  assignToDevice: (planId, deviceId) =>
+    api.post('/plans/assign', { planId, deviceId }),
+  getStats: (planId) => api.get(`/plans/${planId}/stats`),
 };
 
 // Servers API
@@ -67,6 +95,8 @@ export const serversAPI = {
   healthCheck: (serverId) => api.post(`/servers/${serverId}/health-check`),
   getMetrics: (serverId) => api.get(`/servers/${serverId}/metrics`),
   getAccessKeys: (serverId) => api.get(`/servers/${serverId}/access-keys`),
+  getDevices: (serverId) => api.get(`/servers/${serverId}/devices`),
+  getWireGuardStatus: (serverId) => api.get(`/servers/${serverId}/wireguard-status`),
 };
 
 // Users API

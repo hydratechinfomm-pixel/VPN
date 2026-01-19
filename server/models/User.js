@@ -54,6 +54,12 @@ const userSchema = new mongoose.Schema(
         ref: 'AccessKey',
       },
     ],
+    devices: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Device',
+      },
+    ],
     allowedServers: [
       {
         type: mongoose.Schema.Types.ObjectId,

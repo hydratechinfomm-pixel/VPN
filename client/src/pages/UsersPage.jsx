@@ -16,7 +16,8 @@ const UsersPage = () => {
     try {
       setLoading(true);
       const response = await usersAPI.getAll();
-      setUsers(response);
+      const usersList = Array.isArray(response) ? response : response?.data || [];
+      setUsers(usersList);
     } catch (err) {
       setError('Failed to load users');
       console.error(err);

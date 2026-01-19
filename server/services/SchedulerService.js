@@ -1,7 +1,7 @@
 const cron = require('node-cron');
 const VpnServer = require('../models/VpnServer');
-const AccessKey = require('../models/AccessKey');
-const OutlineServerService = require('../services/OutlineServerService');
+const Device = require('../models/Device');
+const WireGuardService = require('../services/WireGuardService');
 
 /**
  * Health check all servers every 5 minutes
@@ -13,8 +13,8 @@ exports.scheduleServerHealthChecks = () => {
       
       for (const server of servers) {
         try {
-          const outlineService = new OutlineServerService(server);
-          const health = await outlineService.healthCheck();
+          const wgService = new WireGuardService(server);
+          const health = await wgService.healthCheck();
           
           server.stats.isHealthy = health.healthy;
           server.stats.lastHealthCheck = new Date();
@@ -36,66 +36,118 @@ exports.scheduleServerHealthChecks = () => {
 };
 
 /**
- * Sync access key data from servers every hour
+ * Sync device usage from WireGuard servers every 5 minutes
  */
-exports.scheduleDataSync = () => {
-  cron.schedule('0 * * * *', async () => {
+exports.scheduleUsageSync = () => {
+  cron.schedule('*/5 * * * *', async () => {
     try {
       const servers = await VpnServer.find({ isActive: true });
       
       for (const server of servers) {
         try {
-          const outlineService = new OutlineServerService(server);
-          const keys = await outlineService.getAccessKeys();
+          const wgService = new WireGuardService(server);
+          const devices = await Device.find({ server: server._id, isEnabled: true });
           
-          for (const key of keys) {
-            await AccessKey.findOneAndUpdate(
-              { keyId: key.id, server: server._id },
-              {
-                dataUsage: { bytes: key.dataUsed || 0 },
-                lastUpdated: new Date(),
-              },
-              { upsert: true }
-            );
+          if (devices.length === 0) continue;
+
+          const usageUpdates = await wgService.syncUsage(devices);
+          
+          for (const update of usageUpdates) {
+            await Device.findByIdAndUpdate(update.deviceId, {
+              'usage.bytesReceived': update.bytesReceived,
+              'usage.bytesSent': update.bytesSent,
+              'usage.lastSync': new Date(),
+              'connectivity.lastHandshake': update.lastHandshake,
+              'connectivity.isConnected': update.isConnected,
+            });
           }
           
-          console.log(`[Data Sync] Synced ${keys.length} keys from ${server.name}`);
+          console.log(`[Usage Sync] Synced ${usageUpdates.length} devices from ${server.name}`);
         } catch (error) {
-          console.error(`[Data Sync] Error syncing ${server.name}:`, error.message);
+          console.error(`[Usage Sync] Error syncing ${server.name}:`, error.message);
         }
       }
     } catch (error) {
-      console.error('[Data Sync] Error:', error.message);
+      console.error('[Usage Sync] Error:', error.message);
     }
   });
 
-  console.log('✓ Data sync scheduler started (every hour)');
+  console.log('✓ Usage sync scheduler started (every 5 minutes)');
 };
 
 /**
- * Check and expire access keys daily
+ * Check and expire devices daily
  */
-exports.scheduleKeyExpiration = () => {
+exports.scheduleDeviceExpiration = () => {
   cron.schedule('0 0 * * *', async () => {
     try {
       const now = new Date();
-      const expiredKeys = await AccessKey.find({
+      const expiredDevices = await Device.find({
         expiresAt: { $lt: now },
         status: { $ne: 'EXPIRED' },
       });
 
-      for (const key of expiredKeys) {
-        key.status = 'EXPIRED';
-        await key.save();
+      for (const device of expiredDevices) {
+        device.status = 'EXPIRED';
+        device.isEnabled = false;
+        await device.save();
       }
 
-      console.log(`[Key Expiration] Expired ${expiredKeys.length} access keys`);
+      console.log(`[Device Expiration] Expired ${expiredDevices.length} devices`);
     } catch (error) {
-      console.error('[Key Expiration] Error:', error.message);
+      console.error('[Device Expiration] Error:', error.message);
     }
   });
 
-  console.log('✓ Key expiration scheduler started (daily at midnight)');
+  console.log('✓ Device expiration scheduler started (daily at midnight)');
+};
+
+/**
+ * Enforce plan limits - check usage and disable devices exceeding limits
+ */
+exports.schedulePlanLimitEnforcement = () => {
+  cron.schedule('*/10 * * * *', async () => {
+    try {
+      const devices = await Device.find({
+        status: 'ACTIVE',
+        isEnabled: true,
+        isUnlimited: false,
+        'dataLimit.isEnabled': true,
+      }).populate('plan');
+
+      let disabledCount = 0;
+
+      for (const device of devices) {
+        const totalUsage = (device.usage.bytesSent || 0) + (device.usage.bytesReceived || 0);
+        const limit = device.dataLimit?.bytes || device.plan?.dataLimit?.bytes;
+
+        if (limit && totalUsage >= limit) {
+          device.isEnabled = false;
+          device.status = 'SUSPENDED';
+          await device.save();
+
+          // Remove peer from WireGuard
+          try {
+            const server = await VpnServer.findById(device.server);
+            const wgService = new WireGuardService(server);
+            await wgService.removePeer(device.publicKey);
+          } catch (error) {
+            console.error(`Failed to remove peer for device ${device._id}:`, error.message);
+          }
+
+          disabledCount++;
+        }
+      }
+
+      if (disabledCount > 0) {
+        console.log(`[Plan Enforcement] Disabled ${disabledCount} devices exceeding limits`);
+      }
+    } catch (error) {
+      console.error('[Plan Enforcement] Error:', error.message);
+    }
+  });
+
+  console.log('✓ Plan limit enforcement scheduler started (every 10 minutes)');
 };
 
 /**
@@ -103,6 +155,7 @@ exports.scheduleKeyExpiration = () => {
  */
 exports.initializeSchedulers = () => {
   this.scheduleServerHealthChecks();
-  this.scheduleDataSync();
-  this.scheduleKeyExpiration();
+  this.scheduleUsageSync();
+  this.scheduleDeviceExpiration();
+  this.schedulePlanLimitEnforcement();
 };

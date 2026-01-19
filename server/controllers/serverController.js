@@ -1,6 +1,6 @@
 const VpnServer = require('../models/VpnServer');
-const AccessKey = require('../models/AccessKey');
-const OutlineServerService = require('../services/OutlineServerService');
+const Device = require('../models/Device');
+const WireGuardService = require('../services/WireGuardService');
 const { logActivity } = require('../middleware/auth');
 const constants = require('../config/constants');
 
@@ -17,7 +17,7 @@ exports.getAllServers = async (req, res) => {
     if (isActive !== undefined) query.isActive = isActive === 'true';
 
     const servers = await VpnServer.find(query)
-      .populate('accessKeys', '-password')
+      .populate('devices')
       .sort({ createdAt: -1 });
 
     res.json({
@@ -60,48 +60,74 @@ exports.createServer = async (req, res) => {
       description,
       host,
       port,
-      apiUrl,
       region,
       country,
       city,
       provider,
-      apiToken,
+      // WireGuard specific
+      wireguardInterfaceName,
+      wireguardVpnIpRange,
+      wireguardPort,
+      serverPublicKey,
+      accessMethod,
+      sshHost,
+      sshPort,
+      sshUsername,
+      sshPassword,
+      sshPrivateKey,
     } = req.body;
 
-    // Validate server connectivity
-    const testServer = new VpnServer({
-      name,
-      host,
-      port,
-      apiUrl,
-      credentials: { apiToken },
-    });
-
-    const outlineService = new OutlineServerService(testServer);
-    try {
-      const serverInfo = await outlineService.getServerInfo();
-      testServer.stats.isHealthy = true;
-    } catch (error) {
-      return res.status(400).json({
-        error: `Cannot connect to server: ${error.message}`,
-      });
-    }
-
-    // Create server
+    // Create server with WireGuard config
     const server = new VpnServer({
       name,
       description,
       host,
-      port,
-      apiUrl,
+      port: port || 51820,
+      apiUrl: `https://${host}`, // Kept for backward compatibility
       region,
       country,
       city,
       provider,
-      credentials: {
-        apiToken,
+      wireguard: {
+        interfaceName: wireguardInterfaceName || 'wg0',
+        vpnIpRange: wireguardVpnIpRange || '10.0.0.0/24',
+        port: wireguardPort || 51820,
+        accessMethod: accessMethod || 'local',
+        ssh: accessMethod === 'ssh' ? {
+          host: sshHost || host,
+          port: sshPort || 22,
+          username: sshUsername,
+          password: sshPassword,
+          privateKey: sshPrivateKey,
+        } : {},
       },
     });
+
+    // Test connection
+    const wgService = new WireGuardService(server);
+    const connectionTest = await wgService.testConnection();
+    if (!connectionTest.success) {
+      return res.status(400).json({
+        error: `Cannot connect to server: ${connectionTest.error}`,
+      });
+    }
+
+    // Set or obtain server public key
+    if (serverPublicKey) {
+      // Use the value provided from the panel (recommended)
+      server.wireguard.serverPublicKey = serverPublicKey;
+    } else {
+      // Fallback: try to detect/generate on the server
+      try {
+        const detectedPublicKey = await wgService.getServerPublicKey();
+        server.wireguard.serverPublicKey = detectedPublicKey;
+      } catch (error) {
+        // If server doesn't have keys yet, generate them
+        const keyPair = await wgService.generateKeyPair();
+        server.wireguard.serverPublicKey = keyPair.publicKey;
+        server.wireguard.serverPrivateKey = keyPair.privateKey;
+      }
+    }
 
     await server.save();
     await logActivity(req.userId, 'ADD_SERVER', 'SERVER', server._id, true);
@@ -123,10 +149,7 @@ exports.getServer = async (req, res) => {
   try {
     const { serverId } = req.params;
 
-    const server = await VpnServer.findById(serverId).populate(
-      'accessKeys',
-      '-password'
-    );
+    const server = await VpnServer.findById(serverId).populate('devices');
 
     if (!server) {
       return res.status(404).json({ error: 'Server not found' });
@@ -182,8 +205,8 @@ exports.deleteServer = async (req, res) => {
       return res.status(404).json({ error: 'Server not found' });
     }
 
-    // Delete all associated access keys
-    await AccessKey.deleteMany({ server: serverId });
+    // Delete all associated devices
+    await Device.deleteMany({ server: serverId });
 
     await VpnServer.findByIdAndDelete(serverId);
     await logActivity(req.userId, 'REMOVE_SERVER', 'SERVER', serverId, true);
@@ -206,10 +229,21 @@ exports.getServerMetrics = async (req, res) => {
       return res.status(404).json({ error: 'Server not found' });
     }
 
-    const outlineService = new OutlineServerService(server);
+    const wgService = new WireGuardService(server);
     try {
-      const metrics = await outlineService.getMetrics();
-      res.json(metrics);
+      const status = await wgService.getServerStatus();
+      const devices = await Device.find({ server: serverId });
+      
+      const totalUsage = devices.reduce((sum, device) => {
+        return sum + (device.usage.bytesSent || 0) + (device.usage.bytesReceived || 0);
+      }, 0);
+
+      res.json({
+        status,
+        totalDevices: devices.length,
+        activeDevices: devices.filter(d => d.isEnabled && d.status === 'ACTIVE').length,
+        totalUsage,
+      });
     } catch (error) {
       res.status(500).json({ error: `Failed to fetch metrics: ${error.message}` });
     }
@@ -230,8 +264,8 @@ exports.healthCheckServer = async (req, res) => {
       return res.status(404).json({ error: 'Server not found' });
     }
 
-    const outlineService = new OutlineServerService(server);
-    const health = await outlineService.healthCheck();
+    const wgService = new WireGuardService(server);
+    const health = await wgService.healthCheck();
 
     // Update server health status
     server.stats.isHealthy = health.healthy;
@@ -245,9 +279,9 @@ exports.healthCheckServer = async (req, res) => {
 };
 
 /**
- * Get all access keys on server
+ * Get all devices on server
  */
-exports.getServerAccessKeys = async (req, res) => {
+exports.getServerDevices = async (req, res) => {
   try {
     const { serverId } = req.params;
 
@@ -256,13 +290,35 @@ exports.getServerAccessKeys = async (req, res) => {
       return res.status(404).json({ error: 'Server not found' });
     }
 
-    const accessKeys = await AccessKey.find({ server: serverId })
-      .populate('user', 'username email');
+    const devices = await Device.find({ server: serverId })
+      .populate('user', 'username email')
+      .populate('plan', 'name');
 
     res.json({
-      total: accessKeys.length,
-      accessKeys,
+      total: devices.length,
+      devices,
     });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+/**
+ * Get WireGuard server status
+ */
+exports.getWireGuardStatus = async (req, res) => {
+  try {
+    const { serverId } = req.params;
+
+    const server = await VpnServer.findById(serverId);
+    if (!server) {
+      return res.status(404).json({ error: 'Server not found' });
+    }
+
+    const wgService = new WireGuardService(server);
+    const status = await wgService.getServerStatus();
+
+    res.json(status);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

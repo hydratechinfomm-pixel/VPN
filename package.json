@@ -1,7 +1,7 @@
 {
-  "name": "outline-vpn-control-panel",
-  "version": "1.0.0",
-  "description": "Complete Outline VPN Control Panel for managing users, access keys, and servers",
+  "name": "wireguard-vpn-control-panel",
+  "version": "2.0.0",
+  "description": "WireGuard VPN Admin Control Panel for managing devices, plans, and servers",
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",
@@ -24,7 +24,10 @@
     "uuid": "^9.0.0",
     "multer": "^1.4.5-lts.1",
     "express-validator": "^7.0.0",
-    "node-cron": "^3.0.2"
+    "node-cron": "^3.0.2",
+    "qrcode": "^1.5.3",
+    "ssh2": "^1.15.0",
+    "ipaddr.js": "^2.1.0"
   },
   "devDependencies": {
     "nodemon": "^2.0.20",

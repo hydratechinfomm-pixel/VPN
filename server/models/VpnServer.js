@@ -87,6 +87,52 @@ const vpnServerSchema = new mongoose.Schema(
       allowedCountries: [String],
       blockedCountries: [String],
     },
+    // WireGuard specific fields
+    wireguard: {
+      interfaceName: {
+        type: String,
+        default: 'wg0',
+      },
+      vpnIpRange: {
+        type: String,
+        default: '10.0.0.0/24',
+      },
+      port: {
+        type: Number,
+        default: 51820,
+      },
+      serverPublicKey: String,
+      serverPrivateKey: {
+        type: String,
+        select: false, // Don't return private key by default
+      },
+      // Access method: 'ssh' or 'local'
+      accessMethod: {
+        type: String,
+        enum: ['ssh', 'local'],
+        default: 'local',
+      },
+      // SSH credentials (if accessMethod is 'ssh')
+      ssh: {
+        host: String,
+        port: {
+          type: Number,
+          default: 22,
+        },
+        username: String,
+        password: String,
+        privateKey: {
+          type: String,
+          select: false,
+        },
+      },
+    },
+    devices: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Device',
+      },
+    ],
   },
   { timestamps: true }
 );

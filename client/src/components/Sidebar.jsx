@@ -26,20 +26,35 @@ const Sidebar = () => {
         </Link>
 
         <Link
+          to="/devices"
+          className={`nav-item ${isActive('/devices') ? 'active' : ''}`}
+        >
+          📱 Devices
+        </Link>
+
+        {(user?.role === 'Admin' || user?.role === 'admin') && (
+          <>
+            <Link
+              to="/plans"
+              className={`nav-item ${isActive('/plans') ? 'active' : ''}`}
+            >
+              💳 Plans
+            </Link>
+            <Link
+              to="/users"
+              className={`nav-item ${isActive('/users') ? 'active' : ''}`}
+            >
+              👥 Users
+            </Link>
+          </>
+        )}
+
+        <Link
           to="/access-keys"
           className={`nav-item ${isActive('/access-keys') ? 'active' : ''}`}
         >
-          🔑 Access Keys
+          🔑 Access Keys (Legacy)
         </Link>
-
-        {user?.role === 'Admin' && (
-          <Link
-            to="/users"
-            className={`nav-item ${isActive('/users') ? 'active' : ''}`}
-          >
-            👥 Users
-          </Link>
-        )}
 
         <Link
           to="/profile"

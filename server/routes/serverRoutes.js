@@ -19,13 +19,41 @@ router.post(
   '/',
   authorizeAdmin,
   [
-    body('name').trim().notEmpty(),
-    body('host').notEmpty(),
-    body('port').isInt({ min: 1, max: 65535 }),
-    body('apiUrl').isURL(),
-    body('region').optional().isIn(['US', 'EU', 'ASIA', 'SOUTH_AMERICA', 'AFRICA', 'OCEANIA']),
-    body('provider').optional().isIn(['AWS', 'Google Cloud', 'Azure', 'DigitalOcean', 'Linode', 'Custom']),
-    body('apiToken').notEmpty(),
+    body('name').trim().notEmpty().withMessage('Server name is required'),
+    body('host').notEmpty().withMessage('Host/IP address is required'),
+    body('port')
+      .optional()
+      .isInt({ min: 1, max: 65535 })
+      .withMessage('Port must be between 1 and 65535'),
+    body('region')
+      .optional()
+      .isIn(['US', 'EU', 'ASIA', 'SOUTH_AMERICA', 'AFRICA', 'OCEANIA'])
+      .withMessage('Invalid region'),
+    body('provider')
+      .optional()
+      .isIn(['AWS', 'Google Cloud', 'Azure', 'DigitalOcean', 'Linode', 'Custom'])
+      .withMessage('Invalid provider'),
+    body('description').optional().trim(),
+    body('country').optional().trim(),
+    body('city').optional().trim(),
+
+    // WireGuard specific validation
+    body('wireguardInterfaceName')
+      .optional()
+      .isString()
+      .withMessage('WireGuard interface name must be a string'),
+    body('wireguardVpnIpRange')
+      .optional()
+      .isString()
+      .withMessage('WireGuard VPN IP range must be a string'),
+    body('wireguardPort')
+      .optional()
+      .isInt({ min: 1, max: 65535 })
+      .withMessage('WireGuard port must be between 1 and 65535'),
+    body('accessMethod')
+      .optional()
+      .isIn(['local', 'ssh'])
+      .withMessage('Access method must be either local or ssh'),
   ],
   validateRequest,
   serverController.createServer
@@ -57,7 +85,10 @@ router.get('/:serverId/metrics', serverController.getServerMetrics);
 // Health check server
 router.post('/:serverId/health-check', serverController.healthCheckServer);
 
-// Get all access keys on server
-router.get('/:serverId/access-keys', serverController.getServerAccessKeys);
+// Get all devices on server
+router.get('/:serverId/devices', serverController.getServerDevices);
+
+// Get WireGuard status
+router.get('/:serverId/wireguard-status', serverController.getWireGuardStatus);
 
 module.exports = router;

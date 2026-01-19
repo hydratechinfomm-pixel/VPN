@@ -1,11 +1,51 @@
-import React from 'react';
+import React, { useState } from 'react';
 
-const ServerListAdvanced = ({ servers, loading, onEdit, onDelete, onRefresh }) => {
+const ServerListAdvanced = ({ servers, loading, onEdit, onDelete, onRefresh, onHealthCheck }) => {
+  const [checkingHealth, setCheckingHealth] = useState({});
+  const [healthStatus, setHealthStatus] = useState({});
+
+  const handleHealthCheck = async (serverId) => {
+    setCheckingHealth(prev => ({ ...prev, [serverId]: true }));
+    try {
+      const result = await onHealthCheck(serverId);
+      setHealthStatus(prev => ({
+        ...prev,
+        [serverId]: {
+          healthy: result.healthy,
+          status: result.status,
+          timestamp: new Date(),
+        }
+      }));
+    } catch (error) {
+      setHealthStatus(prev => ({
+        ...prev,
+        [serverId]: {
+          healthy: false,
+          error: error.message || 'Health check failed',
+          timestamp: new Date(),
+        }
+      }));
+    } finally {
+      setCheckingHealth(prev => ({ ...prev, [serverId]: false }));
+    }
+  };
+
+  const getHealthBadge = (server) => {
+    const health = healthStatus[server._id];
+    if (!health) {
+      return <span className="badge unknown">Unknown</span>;
+    }
+    if (health.healthy) {
+      return <span className="badge healthy">✓ Healthy</span>;
+    }
+    return <span className="badge unhealthy">✗ Unhealthy</span>;
+  };
+
   if (loading) {
     return <div className="loading">Loading servers...</div>;
   }
 
-  if (servers.length === 0) {
+  if (!servers || servers.length === 0) {
     return (
       <div className="empty-state">
         <p>No servers found. Create one to get started.</p>
@@ -29,7 +69,8 @@ const ServerListAdvanced = ({ servers, loading, onEdit, onDelete, onRefresh }) =
             <th>Provider</th>
             <th>IP Address</th>
             <th>Status</th>
-            <th>Keys</th>
+            <th>Health</th>
+            <th>Devices</th>
             <th>Actions</th>
           </tr>
         </thead>
@@ -37,16 +78,35 @@ const ServerListAdvanced = ({ servers, loading, onEdit, onDelete, onRefresh }) =
           {servers.map((server) => (
             <tr key={server._id}>
               <td className="font-bold">{server.name}</td>
-              <td>{server.region}</td>
-              <td>{server.provider}</td>
-              <td className="monospace">{server.ipAddress}</td>
+              <td>{server.region || 'N/A'}</td>
+              <td>{server.provider || 'Custom'}</td>
+              <td className="monospace">{server.host}</td>
               <td>
                 <span className={`badge ${server.isActive ? 'active' : 'inactive'}`}>
                   {server.isActive ? 'Active' : 'Inactive'}
                 </span>
               </td>
-              <td>{server.accessKeys?.length || 0}</td>
+              <td>
+                {getHealthBadge(server)}
+                {healthStatus[server._id]?.status?.isRunning !== undefined && (
+                  <div className="health-details">
+                    <small>
+                      {healthStatus[server._id].status.isRunning ? 'Running' : 'Stopped'} | 
+                      Peers: {healthStatus[server._id].status.peerCount || 0}
+                    </small>
+                  </div>
+                )}
+              </td>
+              <td>{server.devices?.length || 0}</td>
               <td className="actions">
+                <button
+                  className="btn-small btn-success"
+                  onClick={() => handleHealthCheck(server._id)}
+                  disabled={checkingHealth[server._id]}
+                  title="Health Check"
+                >
+                  {checkingHealth[server._id] ? '⏳ Checking...' : '🏥 Health Check'}
+                </button>
                 <button
                   className="btn-small btn-primary"
                   onClick={() => onEdit(server)}
