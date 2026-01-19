@@ -84,7 +84,7 @@ const PlanForm = ({ planData, onSubmit, onCancel }) => {
           </div>
 
           <div className="form-row">
-            <div className="form-group">
+            <div className="form-group checkbox">
               <label>
                 <input
                   type="checkbox"
@@ -169,7 +169,7 @@ const PlanForm = ({ planData, onSubmit, onCancel }) => {
             />
           </div>
 
-          <div className="form-group">
+          <div className="form-group checkbox">
             <label>
               <input
                 type="checkbox"

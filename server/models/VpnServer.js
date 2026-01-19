@@ -45,16 +45,6 @@ const vpnServerSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
-    maxAccessKeys: {
-      type: Number,
-      default: 100,
-    },
-    accessKeys: [
-      {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'AccessKey',
-      },
-    ],
     stats: {
       totalUsers: {
         type: Number,

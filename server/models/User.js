@@ -48,12 +48,6 @@ const userSchema = new mongoose.Schema(
       type: Boolean,
       default: true,
     },
-    accessKeys: [
-      {
-        type: mongoose.Schema.Types.ObjectId,
-        ref: 'AccessKey',
-      },
-    ],
     devices: [
       {
         type: mongoose.Schema.Types.ObjectId,

@@ -21,13 +21,6 @@ module.exports = {
     USER: 'user',
   },
 
-  // Access key limits
-  ACCESS_KEY_LIMITS: {
-    FREE: 1,
-    PREMIUM: 10,
-    ENTERPRISE: 50,
-  },
-
   // Data transfer limits (in GB per month)
   DATA_LIMITS: {
     FREE: 10,

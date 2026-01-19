@@ -52,7 +52,7 @@ const RegisterPage = () => {
     <div className="auth-container">
       <div className="auth-card">
         <div className="auth-header">
-          <h1>Outline VPN</h1>
+          <h1>WireGuard VPN</h1>
           <p>Create Account</p>
         </div>
 

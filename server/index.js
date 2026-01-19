@@ -31,7 +31,6 @@ app.get('/health', (req, res) => {
 
 // API Routes
 app.use('/api/auth', require('./routes/authRoutes'));
-app.use('/api/access-keys', require('./routes/accessKeyRoutes')); // Keep for backward compatibility
 app.use('/api/devices', require('./routes/deviceRoutes'));
 app.use('/api/plans', require('./routes/planRoutes'));
 app.use('/api/servers', require('./routes/serverRoutes'));
@@ -56,7 +55,7 @@ const PORT = process.env.PORT || 5000;
 const server = app.listen(PORT, () => {
   console.log(`
 ╔══════════════════════════════════════════════════════╗
-║  Outline VPN Control Panel API                      ║
+║  WireGuard VPN Control Panel API                      ║
 ║  Server running on http://localhost:${PORT}                 ║
 ║  Environment: ${process.env.NODE_ENV || 'development'}                   ║
 ╚══════════════════════════════════════════════════════╝

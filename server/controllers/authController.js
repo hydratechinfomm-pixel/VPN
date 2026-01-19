@@ -127,7 +127,6 @@ exports.logout = async (req, res) => {
 exports.getCurrentUser = async (req, res) => {
   try {
     const user = await User.findById(req.userId)
-      .populate('accessKeys')
       .populate('allowedServers');
 
     if (!user) {

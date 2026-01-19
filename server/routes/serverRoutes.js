@@ -1,7 +1,7 @@
 const express = require('express');
 const { body } = require('express-validator');
 const serverController = require('../controllers/serverController');
-const { authenticateToken, authorizeAdmin } = require('../middleware/auth');
+const { authenticateToken, authorizeAdmin, authorizePanelAdmin } = require('../middleware/auth');
 const { validateRequest } = require('../middleware/validation');
 
 const router = express.Router();
@@ -11,8 +11,8 @@ router.use(authenticateToken);
 // Get user's accessible servers (anyone)
 router.get('/accessible', serverController.getUserServers);
 
-// Get all servers (admin only)
-router.get('/', authorizeAdmin, serverController.getAllServers);
+// Get all servers (panel admin or staff)
+router.get('/', authorizePanelAdmin, serverController.getAllServers);
 
 // Create server (admin only)
 router.post(
@@ -59,8 +59,8 @@ router.post(
   serverController.createServer
 );
 
-// Get server details
-router.get('/:serverId', serverController.getServer);
+// Get server details (panel admin or staff)
+router.get('/:serverId', authorizePanelAdmin, serverController.getServer);
 
 // Update server (admin only)
 router.put(
@@ -79,16 +79,16 @@ router.put(
 // Delete server (admin only)
 router.delete('/:serverId', authorizeAdmin, serverController.deleteServer);
 
-// Get server metrics
-router.get('/:serverId/metrics', serverController.getServerMetrics);
+// Get server metrics (panel admin or staff)
+router.get('/:serverId/metrics', authorizePanelAdmin, serverController.getServerMetrics);
 
-// Health check server
-router.post('/:serverId/health-check', serverController.healthCheckServer);
+// Health check server (admin only - VPN server operation)
+router.post('/:serverId/health-check', authorizeAdmin, serverController.healthCheckServer);
 
-// Get all devices on server
-router.get('/:serverId/devices', serverController.getServerDevices);
+// Get all devices on server (panel admin or staff)
+router.get('/:serverId/devices', authorizePanelAdmin, serverController.getServerDevices);
 
-// Get WireGuard status
-router.get('/:serverId/wireguard-status', serverController.getWireGuardStatus);
+// Get WireGuard status (panel admin or staff)
+router.get('/:serverId/wireguard-status', authorizePanelAdmin, serverController.getWireGuardStatus);
 
 module.exports = router;

@@ -18,12 +18,14 @@ const Sidebar = () => {
           📊 Dashboard
         </Link>
 
-        <Link
-          to="/servers"
-          className={`nav-item ${isActive('/servers') ? 'active' : ''}`}
-        >
-          🖥️ VPN Servers
-        </Link>
+        {(user?.role?.toLowerCase() === 'admin' || user?.role?.toLowerCase() === 'moderator') && (
+          <Link
+            to="/servers"
+            className={`nav-item ${isActive('/servers') ? 'active' : ''}`}
+          >
+            🖥️ VPN Servers
+          </Link>
+        )}
 
         <Link
           to="/devices"
@@ -32,7 +34,7 @@ const Sidebar = () => {
           📱 Devices
         </Link>
 
-        {(user?.role === 'Admin' || user?.role === 'admin') && (
+        {(user?.role?.toLowerCase() === 'admin' || user?.role?.toLowerCase() === 'moderator') && (
           <>
             <Link
               to="/plans"
@@ -48,13 +50,6 @@ const Sidebar = () => {
             </Link>
           </>
         )}
-
-        <Link
-          to="/access-keys"
-          className={`nav-item ${isActive('/access-keys') ? 'active' : ''}`}
-        >
-          🔑 Access Keys (Legacy)
-        </Link>
 
         <Link
           to="/profile"

@@ -22,7 +22,6 @@ const ServerList = ({ servers, loading, onRefresh }) => {
             <th>Region</th>
             <th>Provider</th>
             <th>Status</th>
-            <th>Access Keys</th>
           </tr>
         </thead>
         <tbody>
@@ -36,7 +35,6 @@ const ServerList = ({ servers, loading, onRefresh }) => {
                   {server.isActive ? 'Active' : 'Inactive'}
                 </span>
               </td>
-              <td>{server.accessKeys?.length || 0}</td>
             </tr>
           ))}
         </tbody>

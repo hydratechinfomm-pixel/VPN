@@ -43,18 +43,6 @@ export const authAPI = {
   refreshToken: (refreshToken) => api.post('/auth/refresh-token', { refreshToken }),
 };
 
-// Access Keys API (kept for backward compatibility)
-export const accessKeysAPI = {
-  getAll: (serverId, status) =>
-    api.get('/access-keys', { params: { serverId, status } }),
-  getOne: (keyId) => api.get(`/access-keys/${keyId}`),
-  create: (keyData) => api.post('/access-keys', keyData),
-  update: (keyId, keyData) => api.put(`/access-keys/${keyId}`, keyData),
-  delete: (keyId) => api.delete(`/access-keys/${keyId}`),
-  toggleStatus: (keyId, status) =>
-    api.patch(`/access-keys/${keyId}/status`, { status }),
-};
-
 // Devices API
 export const devicesAPI = {
   getAll: (serverId, status) =>
@@ -94,7 +82,6 @@ export const serversAPI = {
   delete: (serverId) => api.delete(`/servers/${serverId}`),
   healthCheck: (serverId) => api.post(`/servers/${serverId}/health-check`),
   getMetrics: (serverId) => api.get(`/servers/${serverId}/metrics`),
-  getAccessKeys: (serverId) => api.get(`/servers/${serverId}/access-keys`),
   getDevices: (serverId) => api.get(`/servers/${serverId}/devices`),
   getWireGuardStatus: (serverId) => api.get(`/servers/${serverId}/wireguard-status`),
 };
@@ -104,9 +91,8 @@ export const usersAPI = {
   getAll: (role, plan, isActive) =>
     api.get('/users', { params: { role, plan, isActive } }),
   getOne: (userId) => api.get(`/users/${userId}`),
+  createPanelUser: (data) => api.post('/users', data),
   update: (userId, userData) => api.put(`/users/${userId}`, userData),
-  updateRole: (userId, role) => api.patch(`/users/${userId}/role`, { role }),
-  updateStatus: (userId, isActive) => api.patch(`/users/${userId}/status`, { isActive }),
   delete: (userId) => api.delete(`/users/${userId}`),
   getActivityLogs: (userId, action, limit) =>
     api.get(`/users/${userId}/activity`, { params: { action, limit } }),

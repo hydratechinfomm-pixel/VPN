@@ -92,38 +92,3 @@ exports.validateServerConfig = (config) => {
   };
 };
 
-/**
- * Check user quota
- */
-exports.checkUserQuota = async (userId) => {
-  try {
-    const user = await User.findById(userId).populate('accessKeys');
-    
-    if (!user) {
-      return { allowed: false, reason: 'User not found' };
-    }
-
-    const planLimits = constants.ACCESS_KEY_LIMITS;
-    const currentLimit = planLimits[user.plan] || planLimits.FREE;
-    const keyCount = user.accessKeys.length;
-
-    if (keyCount >= currentLimit) {
-      return {
-        allowed: false,
-        reason: `You have reached the maximum number of access keys (${currentLimit}) for your plan`,
-        current: keyCount,
-        limit: currentLimit,
-      };
-    }
-
-    return {
-      allowed: true,
-      current: keyCount,
-      limit: currentLimit,
-      remaining: currentLimit - keyCount,
-    };
-  } catch (error) {
-    console.error('Error checking user quota:', error.message);
-    return { allowed: false, reason: 'Error checking quota' };
-  }
-};

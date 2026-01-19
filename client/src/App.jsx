@@ -6,7 +6,6 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import DashboardPage from './pages/DashboardPage';
-import AccessKeysPage from './pages/AccessKeysPage';
 import DevicesPage from './pages/DevicesPage';
 import PlansPage from './pages/PlansPage';
 import ServersPage from './pages/ServersPage';
@@ -22,7 +21,7 @@ import Sidebar from './components/Sidebar';
 import './styles/global.css';
 
 // Protected route wrapper
-const ProtectedRoute = ({ children, requiredRole }) => {
+const ProtectedRoute = ({ children, requiredRole, requiredPanelAdmin }) => {
   const { isAuthenticated, user, loading } = useAuth();
 
   if (loading) return <div className="loading-screen">Loading...</div>;
@@ -31,8 +30,12 @@ const ProtectedRoute = ({ children, requiredRole }) => {
     return <Navigate to="/login" />;
   }
 
-  if (requiredRole) {
-    // Case-insensitive role check
+  if (requiredPanelAdmin) {
+    const userRole = user?.role?.toLowerCase();
+    if (userRole !== 'admin' && userRole !== 'moderator') {
+      return <Navigate to="/dashboard" />;
+    }
+  } else if (requiredRole) {
     const userRole = user?.role?.toLowerCase();
     const requiredRoleLower = requiredRole.toLowerCase();
     if (userRole !== requiredRoleLower) {
@@ -91,15 +94,6 @@ function App() {
           />
 
           <Route
-            path="/access-keys"
-            element={
-              <ProtectedRoute>
-                <AppLayout><AccessKeysPage /></AppLayout>
-              </ProtectedRoute>
-            }
-          />
-
-          <Route
             path="/profile"
             element={
               <ProtectedRoute>
@@ -108,11 +102,11 @@ function App() {
             }
           />
 
-          {/* Admin Routes */}
+          {/* Panel admin or staff: Servers, Plans, Users */}
           <Route
             path="/servers"
             element={
-              <ProtectedRoute requiredRole="Admin">
+              <ProtectedRoute requiredPanelAdmin>
                 <AppLayout><ServersPage /></AppLayout>
               </ProtectedRoute>
             }
@@ -121,7 +115,7 @@ function App() {
           <Route
             path="/plans"
             element={
-              <ProtectedRoute requiredRole="Admin">
+              <ProtectedRoute requiredPanelAdmin>
                 <AppLayout><PlansPage /></AppLayout>
               </ProtectedRoute>
             }
@@ -130,7 +124,7 @@ function App() {
           <Route
             path="/users"
             element={
-              <ProtectedRoute requiredRole="Admin">
+              <ProtectedRoute requiredPanelAdmin>
                 <AppLayout><UsersPage /></AppLayout>
               </ProtectedRoute>
             }

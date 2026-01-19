@@ -23,7 +23,7 @@ exports.authenticateToken = (req, res, next) => {
 };
 
 /**
- * Verify user is admin
+ * Verify user is admin (full panel control including VPN server ops and creating panel users)
  */
 exports.authorizeAdmin = async (req, res, next) => {
   try {
@@ -33,6 +33,27 @@ exports.authorizeAdmin = async (req, res, next) => {
     if (!user || user.role !== constants.ROLES.ADMIN) {
       await logActivity(req.userId, 'ADMIN_ACCESS_DENIED', 'USER', null, false, 'Unauthorized admin access attempt');
       return res.status(403).json({ error: 'Admin access required' });
+    }
+
+    req.user = user;
+    next();
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+/**
+ * Verify user is panel admin or staff (admin or moderator)
+ * Staff can do all except VPN server write ops and creating panel users
+ */
+exports.authorizePanelAdmin = async (req, res, next) => {
+  try {
+    const User = require('../models/User');
+    const user = await User.findById(req.userId);
+
+    if (!user || (user.role !== constants.ROLES.ADMIN && user.role !== constants.ROLES.MODERATOR)) {
+      await logActivity(req.userId, 'PANEL_ADMIN_ACCESS_DENIED', 'USER', null, false, 'Panel admin or staff access required');
+      return res.status(403).json({ error: 'Panel admin or staff access required' });
     }
 
     req.user = user;
