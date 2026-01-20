@@ -77,6 +77,7 @@ const DeviceForm = ({ deviceData, servers, plans, onSubmit, onCancel }) => {
               </select>
             </div>
 
+          <div className="form-row">
             <div className="form-group">
               <label htmlFor="planId">Plan (Optional)</label>
               <select
@@ -92,12 +93,11 @@ const DeviceForm = ({ deviceData, servers, plans, onSubmit, onCancel }) => {
                   </option>
                 ))}
               </select>
+              <small>Plan provides default data limit for this device</small>
             </div>
-          </div>
 
-          <div className="form-row">
             <div className="form-group">
-              <label htmlFor="dataLimit">Data Limit (GB)</label>
+              <label htmlFor="dataLimit">Device Data Limit Override (GB)</label>
               <input
                 type="number"
                 id="dataLimit"
@@ -106,10 +106,11 @@ const DeviceForm = ({ deviceData, servers, plans, onSubmit, onCancel }) => {
                 onChange={handleChange}
                 min="0"
                 step="0.01"
-                placeholder="Leave empty for unlimited"
+                placeholder="Leave empty to use plan limit"
               />
-              <small>Leave empty for unlimited data</small>
+              <small>Optional: Override plan limit for this device only. Leave empty to use plan limit.</small>
             </div>
+          </div>
 
             <div className="form-group">
               <label htmlFor="expiresAt">Expiration Date</label>

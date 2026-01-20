@@ -84,6 +84,7 @@ export const serversAPI = {
   getMetrics: (serverId) => api.get(`/servers/${serverId}/metrics`),
   getDevices: (serverId) => api.get(`/servers/${serverId}/devices`),
   getWireGuardStatus: (serverId) => api.get(`/servers/${serverId}/wireguard-status`),
+  syncOutline: (serverId) => api.post(`/servers/${serverId}/sync-outline`),
 };
 
 // Users API

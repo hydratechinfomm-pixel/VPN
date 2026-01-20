@@ -57,6 +57,7 @@ const DeviceList = ({ devices, onEdit, onDelete, onDownloadConfig }) => {
             <tr>
               <th>Name</th>
               <th>Server</th>
+              <th>Type</th>
               <th>VPN IP</th>
               <th>Plan</th>
               <th>Usage</th>
@@ -66,7 +67,9 @@ const DeviceList = ({ devices, onEdit, onDelete, onDownloadConfig }) => {
           </thead>
           <tbody>
             {devices.map((device) => {
-              const totalUsage = (device.usage?.bytesSent || 0) + (device.usage?.bytesReceived || 0);
+              // For Outline devices, use totalBytesUsed if available, otherwise sum sent+received
+              const totalUsage = device.totalBytesUsed || 
+                                 ((device.usage?.bytesSent || 0) + (device.usage?.bytesReceived || 0));
               const limit = device.dataLimit?.bytes || device.plan?.dataLimit?.bytes;
               const usagePercent = limit ? (totalUsage / limit) * 100 : 0;
 
@@ -74,6 +77,19 @@ const DeviceList = ({ devices, onEdit, onDelete, onDownloadConfig }) => {
                 <tr key={device._id}>
                   <td>{device.name}</td>
                   <td>{device.server?.name || 'N/A'}</td>
+                  <td>
+                    <span style={{
+                      display: 'inline-block',
+                      padding: '4px 8px',
+                      borderRadius: '4px',
+                      fontSize: '12px',
+                      fontWeight: 'bold',
+                      backgroundColor: device.server?.vpnType === 'wireguard' ? '#4CAF50' : '#FF9800',
+                      color: 'white'
+                    }}>
+                      {device.server?.vpnType === 'wireguard' ? '🔷 WireGuard' : '🔶 Outline'}
+                    </span>
+                  </td>
                   <td>{device.vpnIp}</td>
                   <td>
                     {device.plan?.name || 'No Plan'}
@@ -82,13 +98,19 @@ const DeviceList = ({ devices, onEdit, onDelete, onDownloadConfig }) => {
                   <td>
                     <div className="usage-info">
                       <span>{formatBytes(totalUsage)}</span>
-                      {limit && (
-                        <div className="usage-bar">
-                          <div
-                            className="usage-fill"
-                            style={{ width: `${Math.min(usagePercent, 100)}%` }}
-                          />
-                        </div>
+                      {device.limitInfo?.effectiveLimit && (
+                        <>
+                          <div className="usage-bar">
+                            <div
+                              className="usage-fill"
+                              style={{ width: `${Math.min(usagePercent, 100)}%` }}
+                            />
+                          </div>
+                          <small style={{ display: 'block', marginTop: '4px', fontSize: '11px', color: '#666' }}>
+                            {formatBytes(totalUsage)} / {formatBytes(device.limitInfo.effectiveLimit)}
+                            {device.limitInfo.limitSource === 'device-override' ? ' (Device Override)' : ' (Plan Limit)'}
+                          </small>
+                        </>
                       )}
                     </div>
                   </td>

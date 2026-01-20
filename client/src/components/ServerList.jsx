@@ -19,6 +19,7 @@ const ServerList = ({ servers, loading, onRefresh }) => {
         <thead>
           <tr>
             <th>Server Name</th>
+            <th>Type</th>
             <th>Region</th>
             <th>Provider</th>
             <th>Status</th>
@@ -28,6 +29,19 @@ const ServerList = ({ servers, loading, onRefresh }) => {
           {servers.map((server) => (
             <tr key={server._id}>
               <td>{server.name}</td>
+              <td>
+                <span style={{
+                  display: 'inline-block',
+                  padding: '4px 8px',
+                  borderRadius: '4px',
+                  fontSize: '12px',
+                  fontWeight: 'bold',
+                  backgroundColor: server.vpnType === 'wireguard' ? '#4CAF50' : '#FF9800',
+                  color: 'white'
+                }}>
+                  {server.vpnType === 'wireguard' ? '🔷 WireGuard' : '🔶 Outline'}
+                </span>
+              </td>
               <td>{server.region}</td>
               <td>{server.provider}</td>
               <td>

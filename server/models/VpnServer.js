@@ -8,6 +8,13 @@ const vpnServerSchema = new mongoose.Schema(
       trim: true,
     },
     description: String,
+    // VPN Type: wireguard or outline
+    vpnType: {
+      type: String,
+      enum: ['wireguard', 'outline'],
+      default: 'wireguard',
+      required: true,
+    },
     host: {
       type: String,
       required: true,
@@ -76,6 +83,53 @@ const vpnServerSchema = new mongoose.Schema(
       },
       allowedCountries: [String],
       blockedCountries: [String],
+    },
+    // Outline specific fields
+    outline: {
+      apiBaseUrl: String,
+      apiPort: {
+        type: Number,
+        default: 8081,
+      },
+      // Certificate SHA256 fingerprint for API verification
+      certSha256: String,
+      // Admin access key for Outline API
+      adminAccessKey: {
+        type: String,
+        select: false,
+      },
+      // Access key port for users
+      accessKeyPort: {
+        type: Number,
+        default: 8388,
+      },
+      // Method to access Outline: 'api' or 'ssh'
+      accessMethod: {
+        type: String,
+        enum: ['api', 'ssh'],
+        default: 'api',
+      },
+      // SSH credentials (if accessMethod is 'ssh')
+      ssh: {
+        host: String,
+        port: {
+          type: Number,
+          default: 22,
+        },
+        username: String,
+        password: String,
+        privateKey: {
+          type: String,
+          select: false,
+        },
+      },
+      // Outline version
+      version: String,
+      // Next key ID to use
+      nextKeyId: {
+        type: Number,
+        default: 1,
+      },
     },
     // WireGuard specific fields
     wireguard: {

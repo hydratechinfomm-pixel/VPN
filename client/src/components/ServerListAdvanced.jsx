@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 
-const ServerListAdvanced = ({ servers, loading, onEdit, onDelete, onRefresh, onHealthCheck }) => {
+const ServerListAdvanced = ({ servers, loading, onEdit, onDelete, onRefresh, onHealthCheck, onSyncOutline }) => {
   const [checkingHealth, setCheckingHealth] = useState({});
   const [healthStatus, setHealthStatus] = useState({});
 
@@ -11,7 +11,7 @@ const ServerListAdvanced = ({ servers, loading, onEdit, onDelete, onRefresh, onH
       setHealthStatus(prev => ({
         ...prev,
         [serverId]: {
-          healthy: result.healthy,
+          healthy: result.isHealthy,
           status: result.status,
           timestamp: new Date(),
         }
@@ -65,6 +65,7 @@ const ServerListAdvanced = ({ servers, loading, onEdit, onDelete, onRefresh, onH
         <thead>
           <tr>
             <th>Server Name</th>
+            <th>Type</th>
             <th>Region</th>
             <th>Provider</th>
             <th>IP Address</th>
@@ -78,6 +79,19 @@ const ServerListAdvanced = ({ servers, loading, onEdit, onDelete, onRefresh, onH
           {servers.map((server) => (
             <tr key={server._id}>
               <td className="font-bold">{server.name}</td>
+              <td>
+                <span style={{
+                  display: 'inline-block',
+                  padding: '4px 8px',
+                  borderRadius: '4px',
+                  fontSize: '12px',
+                  fontWeight: 'bold',
+                  backgroundColor: server.vpnType === 'wireguard' ? '#4CAF50' : '#FF9800',
+                  color: 'white'
+                }}>
+                  {server.vpnType === 'wireguard' ? '🔷 WireGuard' : '🔶 Outline'}
+                </span>
+              </td>
               <td>{server.region || 'N/A'}</td>
               <td>{server.provider || 'Custom'}</td>
               <td className="monospace">{server.host}</td>
@@ -107,6 +121,15 @@ const ServerListAdvanced = ({ servers, loading, onEdit, onDelete, onRefresh, onH
                 >
                   {checkingHealth[server._id] ? '⏳ Checking...' : '🏥 Health Check'}
                 </button>
+                {server.vpnType === 'outline' && (
+                  <button
+                    className="btn-small btn-info"
+                    onClick={() => onSyncOutline(server._id)}
+                    title="Sync Access Keys from Server"
+                  >
+                    ↻ Sync
+                  </button>
+                )}
                 <button
                   className="btn-small btn-primary"
                   onClick={() => onEdit(server)}

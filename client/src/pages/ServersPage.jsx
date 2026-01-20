@@ -82,7 +82,7 @@ const ServersPage = () => {
                 ...s,
                 stats: {
                   ...s.stats,
-                  isHealthy: result.healthy,
+                  isHealthy: result.isHealthy,
                   lastHealthCheck: new Date(),
                 },
               }
@@ -93,6 +93,18 @@ const ServersPage = () => {
     } catch (err) {
       console.error('Health check error:', err);
       throw err;
+    }
+  };
+
+  const handleSyncOutline = async (serverId) => {
+    try {
+      const response = await serversAPI.syncOutline(serverId);
+      setError('');
+      alert(`✅ Synced! Imported ${response.synced} new access keys. Skipped ${response.skipped} existing keys.`);
+      fetchServers();
+    } catch (err) {
+      setError(`Sync failed: ${err.response?.data?.error || err.message}`);
+      console.error(err);
     }
   };
 
@@ -122,6 +134,7 @@ const ServersPage = () => {
         onDelete={handleDeleteServer}
         onRefresh={fetchServers}
         onHealthCheck={handleHealthCheck}
+        onSyncOutline={handleSyncOutline}
       />
     </div>
   );

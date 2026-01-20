@@ -13,10 +13,11 @@ const DevicesPage = () => {
   const [showForm, setShowForm] = useState(false);
   const [editingDevice, setEditingDevice] = useState(null);
   const [selectedServerId, setSelectedServerId] = useState('');
+  const [selectedServerType, setSelectedServerType] = useState(''); // Add server type filter
 
   useEffect(() => {
     fetchData();
-  }, []);
+  }, [selectedServerId, selectedServerType]); // Refetch when either filter changes
 
   const fetchData = async () => {
     try {
@@ -29,7 +30,16 @@ const DevicesPage = () => {
       const devicesList = Array.isArray(devicesResponse) ? devicesResponse : devicesResponse?.devices || [];
       const serversList = Array.isArray(serversResponse) ? serversResponse : serversResponse?.servers || [];
       const plansList = Array.isArray(plansResponse) ? plansResponse : plansResponse?.plans || [];
-      setDevices(devicesList);
+      
+      // Filter devices by server type if selected
+      let filteredDevices = devicesList;
+      if (selectedServerType) {
+        filteredDevices = devicesList.filter(
+          (device) => device.server?.vpnType === selectedServerType
+        );
+      }
+      
+      setDevices(filteredDevices);
       setServers(serversList);
       setPlans(plansList);
     } catch (err) {
@@ -115,11 +125,18 @@ const DevicesPage = () => {
 
       <div className="filters">
         <select
+          value={selectedServerType}
+          onChange={(e) => setSelectedServerType(e.target.value)}
+          className="filter-select"
+        >
+          <option value="">All VPN Types</option>
+          <option value="wireguard">🔷 WireGuard</option>
+          <option value="outline">🔶 Outline</option>
+        </select>
+
+        <select
           value={selectedServerId}
-          onChange={(e) => {
-            setSelectedServerId(e.target.value);
-            fetchData();
-          }}
+          onChange={(e) => setSelectedServerId(e.target.value)}
           className="filter-select"
         >
           <option value="">All Servers</option>

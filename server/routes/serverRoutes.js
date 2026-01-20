@@ -14,13 +14,17 @@ router.get('/accessible', serverController.getUserServers);
 // Get all servers (panel admin or staff)
 router.get('/', authorizePanelAdmin, serverController.getAllServers);
 
-// Create server (admin only)
+// Create server (admin only) - supports WireGuard and Outline
 router.post(
   '/',
   authorizeAdmin,
   [
     body('name').trim().notEmpty().withMessage('Server name is required'),
     body('host').notEmpty().withMessage('Host/IP address is required'),
+    body('vpnType')
+      .optional()
+      .isIn(['wireguard', 'outline'])
+      .withMessage('VPN type must be either "wireguard" or "outline"'),
     body('port')
       .optional()
       .isInt({ min: 1, max: 65535 })
@@ -50,10 +54,32 @@ router.post(
       .optional()
       .isInt({ min: 1, max: 65535 })
       .withMessage('WireGuard port must be between 1 and 65535'),
-    body('accessMethod')
+    body('wireguardAccessMethod')
       .optional()
       .isIn(['local', 'ssh'])
-      .withMessage('Access method must be either local or ssh'),
+      .withMessage('WireGuard access method must be either local or ssh'),
+
+    // Outline specific validation
+    body('outlineApiPort')
+      .optional()
+      .isInt({ min: 1, max: 65535 })
+      .withMessage('Outline API port must be between 1 and 65535'),
+    body('outlineAdminAccessKey')
+      .optional()
+      .isString()
+      .withMessage('Outline admin access key must be a string'),
+    body('outlineAccessKeyPort')
+      .optional()
+      .isInt({ min: 1, max: 65535 })
+      .withMessage('Outline access key port must be between 1 and 65535'),
+    body('outlineCertSha256')
+      .optional()
+      .isString()
+      .withMessage('Outline certificate SHA256 must be a string'),
+    body('outlineAccessMethod')
+      .optional()
+      .isIn(['api', 'ssh'])
+      .withMessage('Outline access method must be either api or ssh'),
   ],
   validateRequest,
   serverController.createServer
@@ -90,5 +116,11 @@ router.get('/:serverId/devices', authorizePanelAdmin, serverController.getServer
 
 // Get WireGuard status (panel admin or staff)
 router.get('/:serverId/wireguard-status', authorizePanelAdmin, serverController.getWireGuardStatus);
+
+// Get Outline server status (panel admin or staff)
+router.get('/:serverId/outline-status', authorizePanelAdmin, serverController.getOutlineStatus);
+
+// Sync Outline access keys from server to database (admin only)
+router.post('/:serverId/sync-outline', authorizeAdmin, serverController.syncOutlineAccessKeys);
 
 module.exports = router;

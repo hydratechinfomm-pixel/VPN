@@ -10,7 +10,7 @@ const deviceSchema = new mongoose.Schema(
     user: {
       type: mongoose.Schema.Types.ObjectId,
       ref: 'User',
-      required: true,
+      required: false, // Optional for synced/unassigned devices
     },
     server: {
       type: mongoose.Schema.Types.ObjectId,
@@ -21,21 +21,24 @@ const deviceSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: 'Plan',
     },
-    // WireGuard keys
+    // Reference to Outline AccessKey if using Outline server
+    accessKey: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'AccessKey',
+    },
+    // WireGuard keys (optional, only for WireGuard servers)
     publicKey: {
       type: String,
-      required: true,
-      unique: true,
+      unique: false,
+      sparse: true, // Allow null/undefined for non-WireGuard devices
     },
     privateKey: {
       type: String,
-      required: true,
       select: false, // Don't return private key by default
     },
-    // Assigned VPN IP address
+    // Assigned VPN IP address (WireGuard only)
     vpnIp: {
       type: String,
-      required: true,
     },
     // Device status
     status: {
@@ -103,9 +106,12 @@ const deviceSchema = new mongoose.Schema(
 
 // Index for faster queries
 deviceSchema.index({ user: 1, server: 1 });
-deviceSchema.index({ publicKey: 1 });
+// Compound index for WireGuard public keys - sparse to allow multiple nulls
+deviceSchema.index({ publicKey: 1, server: 1 }, { sparse: true });
 deviceSchema.index({ status: 1 });
 deviceSchema.index({ vpnIp: 1 });
+// Index for access key lookup (Outline devices)
+deviceSchema.index({ accessKey: 1 });
 
 // Virtual for total usage
 deviceSchema.virtual('totalUsage').get(function () {

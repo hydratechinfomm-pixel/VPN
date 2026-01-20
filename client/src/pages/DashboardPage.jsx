@@ -10,7 +10,9 @@ const DashboardPage = () => {
   const [servers, setServers] = useState([]);
   const [devices, setDevices] = useState([]);
   const [stats, setStats] = useState({ 
-    totalServers: 0, 
+    totalServers: 0,
+    wireguardServers: 0,
+    outlineServers: 0,
     activeServers: 0, 
     totalDevices: 0,
     onlineDevices: 0,
@@ -40,6 +42,8 @@ const DashboardPage = () => {
       
       // Calculate stats
       const activeCount = serversList.filter((s) => s.isActive).length;
+      const wireguardCount = serversList.filter((s) => s.vpnType === 'wireguard').length;
+      const outlineCount = serversList.filter((s) => s.vpnType === 'outline').length;
       const onlineDevices = devicesList.filter((d) => d.connectivity?.isConnected && d.isEnabled).length;
       const totalUsage = devicesList.reduce((sum, d) => {
         return sum + (d.usage?.bytesSent || 0) + (d.usage?.bytesReceived || 0);
@@ -47,6 +51,8 @@ const DashboardPage = () => {
       
       setStats({
         totalServers: serversList.length,
+        wireguardServers: wireguardCount,
+        outlineServers: outlineCount,
         activeServers: activeCount,
         totalDevices: devicesList.length,
         onlineDevices,
@@ -69,7 +75,7 @@ const DashboardPage = () => {
 
       {error && <div className="alert alert-error">{error}</div>}
 
-      <DashboardStats stats={stats} loading={loading} />
+      <DashboardStats stats={stats} loading={loading} servers={servers} />
 
       <div className="dashboard-section">
         <div className="section-header">

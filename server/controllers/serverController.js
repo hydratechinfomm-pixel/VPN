@@ -1,20 +1,33 @@
 const VpnServer = require('../models/VpnServer');
 const Device = require('../models/Device');
+const AccessKey = require('../models/AccessKey');
 const WireGuardService = require('../services/WireGuardService');
+const OutlineService = require('../services/OutlineService');
 const { logActivity } = require('../middleware/auth');
 const constants = require('../config/constants');
 
 /**
- * Get all servers (admin only)
+ * Factory function to get the appropriate VPN service
+ */
+function getVpnService(server) {
+  if (server.vpnType === 'outline') {
+    return new OutlineService(server);
+  }
+  return new WireGuardService(server);
+}
+
+/**
+ * Get all servers (admin only) - with optional type filter
  */
 exports.getAllServers = async (req, res) => {
   try {
-    const { region, provider, isActive } = req.query;
+    const { region, provider, isActive, vpnType } = req.query;
     const query = {};
 
     if (region) query.region = region;
     if (provider) query.provider = provider;
     if (isActive !== undefined) query.isActive = isActive === 'true';
+    if (vpnType) query.vpnType = vpnType; // Filter by VPN type
 
     const servers = await VpnServer.find(query)
       .populate('devices')
@@ -51,7 +64,7 @@ exports.getUserServers = async (req, res) => {
 };
 
 /**
- * Create new VPN server
+ * Create new VPN server (WireGuard or Outline)
  */
 exports.createServer = async (req, res) => {
   try {
@@ -60,6 +73,7 @@ exports.createServer = async (req, res) => {
       description,
       host,
       port,
+      vpnType = 'wireguard',
       region,
       country,
       city,
@@ -69,71 +83,107 @@ exports.createServer = async (req, res) => {
       wireguardVpnIpRange,
       wireguardPort,
       serverPublicKey,
-      accessMethod,
+      wireguardAccessMethod,
       sshHost,
       sshPort,
       sshUsername,
       sshPassword,
       sshPrivateKey,
+      // Outline specific
+      outlineApiPort,
+      outlineAdminAccessKey,
+      outlineAccessKeyPort,
+      outlineCertSha256,
+      outlineAccessMethod,
     } = req.body;
 
-    // Create server with WireGuard config
-    const server = new VpnServer({
+    // Validate VPN type
+    if (!['wireguard', 'outline'].includes(vpnType)) {
+      return res.status(400).json({ error: 'Invalid vpnType. Must be "wireguard" or "outline"' });
+    }
+
+    // Validate required Outline fields
+    if (vpnType === 'outline' && !outlineAdminAccessKey) {
+      return res.status(400).json({ error: 'Admin access key is required for Outline servers' });
+    }
+
+    let serverData = {
       name,
       description,
       host,
-      port: port || 51820,
-      apiUrl: `https://${host}`, // Kept for backward compatibility
+      port: port || (vpnType === 'wireguard' ? 51820 : 443),
+      vpnType,
+      apiUrl: `https://${host}`,
       region,
       country,
       city,
       provider,
-      wireguard: {
+    };
+
+    // Configure based on VPN type
+    if (vpnType === 'wireguard') {
+      serverData.wireguard = {
         interfaceName: wireguardInterfaceName || 'wg0',
         vpnIpRange: wireguardVpnIpRange || '10.0.0.0/24',
         port: wireguardPort || 51820,
-        accessMethod: accessMethod || 'local',
-        ssh: accessMethod === 'ssh' ? {
+        accessMethod: wireguardAccessMethod || 'local',
+        ssh: wireguardAccessMethod === 'ssh' ? {
           host: sshHost || host,
           port: sshPort || 22,
           username: sshUsername,
           password: sshPassword,
           privateKey: sshPrivateKey,
         } : {},
-      },
-    });
+      };
+    } else if (vpnType === 'outline') {
+      serverData.outline = {
+        apiBaseUrl: host,
+        apiPort: outlineApiPort || 8081,
+        adminAccessKey: outlineAdminAccessKey,
+        accessKeyPort: outlineAccessKeyPort || 8388,
+        certSha256: outlineCertSha256,
+        accessMethod: outlineAccessMethod || 'api',
+        ssh: outlineAccessMethod === 'ssh' ? {
+          host: sshHost || host,
+          port: sshPort || 22,
+          username: sshUsername,
+          password: sshPassword,
+          privateKey: sshPrivateKey,
+        } : {},
+      };
+    }
 
-    // Test connection
-    const wgService = new WireGuardService(server);
-    const connectionTest = await wgService.testConnection();
-    if (!connectionTest.success) {
+    const server = new VpnServer(serverData);
+
+    // Test connection using appropriate service
+    const vpnService = getVpnService(server);
+    
+    try {
+      const isHealthy = await vpnService.checkHealth();
+      if (!isHealthy) {
+        return res.status(400).json({
+          error: `Cannot connect to ${vpnType} server. Please verify the connection details.`,
+        });
+      }
+    } catch (error) {
       return res.status(400).json({
-        error: `Cannot connect to server: ${connectionTest.error}`,
+        error: `Connection test failed: ${error.message}`,
       });
     }
 
-    // Set or obtain server public key
-    if (serverPublicKey) {
-      // Use the value provided from the panel (recommended)
-      server.wireguard.serverPublicKey = serverPublicKey;
-    } else {
-      // Fallback: try to detect/generate on the server
-      try {
-        const detectedPublicKey = await wgService.getServerPublicKey();
-        server.wireguard.serverPublicKey = detectedPublicKey;
-      } catch (error) {
-        // If server doesn't have keys yet, generate them
-        const keyPair = await wgService.generateKeyPair();
-        server.wireguard.serverPublicKey = keyPair.publicKey;
-        server.wireguard.serverPrivateKey = keyPair.privateKey;
-      }
+    // Initialize server
+    try {
+      const initResult = await vpnService.initialize();
+      server.stats.isHealthy = true;
+    } catch (error) {
+      console.warn(`Server initialization warning: ${error.message}`);
     }
 
     await server.save();
     await logActivity(req.userId, 'ADD_SERVER', 'SERVER', server._id, true);
 
     res.status(201).json({
-      message: 'Server created successfully',
+      message: `${vpnType.toUpperCase()} server created successfully`,
       server,
     });
   } catch (error) {
@@ -149,7 +199,9 @@ exports.getServer = async (req, res) => {
   try {
     const { serverId } = req.params;
 
-    const server = await VpnServer.findById(serverId).populate('devices');
+    const server = await VpnServer.findById(serverId)
+      .select('+outline.adminAccessKey +outline.ssh.privateKey')
+      .populate('devices');
 
     if (!server) {
       return res.status(404).json({ error: 'Server not found' });
@@ -169,7 +221,8 @@ exports.updateServer = async (req, res) => {
     const { serverId } = req.params;
     const { name, description, region, country, city, provider } = req.body;
 
-    const server = await VpnServer.findById(serverId);
+    const server = await VpnServer.findById(serverId)
+      .select('+outline.adminAccessKey +outline.ssh.privateKey');
     if (!server) {
       return res.status(404).json({ error: 'Server not found' });
     }
@@ -218,7 +271,7 @@ exports.deleteServer = async (req, res) => {
 };
 
 /**
- * Get server metrics
+ * Get server metrics (type-agnostic)
  */
 exports.getServerMetrics = async (req, res) => {
   try {
@@ -229,20 +282,23 @@ exports.getServerMetrics = async (req, res) => {
       return res.status(404).json({ error: 'Server not found' });
     }
 
-    const wgService = new WireGuardService(server);
+    const vpnService = getVpnService(server);
     try {
-      const status = await wgService.getServerStatus();
-      const devices = await Device.find({ server: serverId });
+      const stats = await vpnService.getServerStats();
       
-      const totalUsage = devices.reduce((sum, device) => {
-        return sum + (device.usage.bytesSent || 0) + (device.usage.bytesReceived || 0);
-      }, 0);
+      // Get associated devices/keys based on VPN type
+      let dataPoints;
+      if (server.vpnType === 'outline') {
+        dataPoints = await AccessKey.find({ server: serverId });
+      } else {
+        dataPoints = await Device.find({ server: serverId });
+      }
 
       res.json({
-        status,
-        totalDevices: devices.length,
-        activeDevices: devices.filter(d => d.isEnabled && d.status === 'ACTIVE').length,
-        totalUsage,
+        vpnType: server.vpnType,
+        stats,
+        totalItems: dataPoints.length,
+        activeItems: dataPoints.filter(d => d.status === 'ACTIVE').length,
       });
     } catch (error) {
       res.status(500).json({ error: `Failed to fetch metrics: ${error.message}` });
@@ -253,7 +309,7 @@ exports.getServerMetrics = async (req, res) => {
 };
 
 /**
- * Health check server
+ * Health check server (type-agnostic)
  */
 exports.healthCheckServer = async (req, res) => {
   try {
@@ -264,15 +320,19 @@ exports.healthCheckServer = async (req, res) => {
       return res.status(404).json({ error: 'Server not found' });
     }
 
-    const wgService = new WireGuardService(server);
-    const health = await wgService.healthCheck();
+    const vpnService = getVpnService(server);
+    const isHealthy = await vpnService.checkHealth();
 
     // Update server health status
-    server.stats.isHealthy = health.healthy;
+    server.stats.isHealthy = isHealthy;
     server.stats.lastHealthCheck = new Date();
     await server.save();
 
-    res.json(health);
+    res.json({
+      vpnType: server.vpnType,
+      isHealthy,
+      lastCheck: server.stats.lastHealthCheck,
+    });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -304,7 +364,7 @@ exports.getServerDevices = async (req, res) => {
 };
 
 /**
- * Get WireGuard server status
+ * Get server status (type-specific details)
  */
 exports.getWireGuardStatus = async (req, res) => {
   try {
@@ -315,11 +375,176 @@ exports.getWireGuardStatus = async (req, res) => {
       return res.status(404).json({ error: 'Server not found' });
     }
 
+    // Only WireGuard has detailed peer status
+    if (server.vpnType !== 'wireguard') {
+      return res.status(400).json({ 
+        error: `Detailed status not available for ${server.vpnType} servers` 
+      });
+    }
+
     const wgService = new WireGuardService(server);
     const status = await wgService.getServerStatus();
 
     res.json(status);
   } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+/**
+ * Get Outline server details (Outline-specific)
+ */
+exports.getOutlineStatus = async (req, res) => {
+  try {
+    const { serverId } = req.params;
+
+    const server = await VpnServer.findById(serverId);
+    if (!server) {
+      return res.status(404).json({ error: 'Server not found' });
+    }
+
+    // Only Outline has Outline-specific status
+    if (server.vpnType !== 'outline') {
+      return res.status(400).json({ 
+        error: 'This endpoint is for Outline servers only' 
+      });
+    }
+
+    const outlineService = new OutlineService(server);
+    const info = await outlineService.getServerInfo();
+
+    res.json({
+      vpnType: 'outline',
+      serverId: info.id,
+      version: info.version,
+      accessKeys: info.accessKeys?.map(key => ({
+        id: key.id,
+        name: key.name,
+        used: key.used_by?.bytes || 0,
+        dataLimit: key.dataLimit || null,
+      })) || [],
+      portForNewAccessKeys: info.portForNewAccessKeys,
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+/**
+ * Sync Outline access keys from server to database
+ */
+exports.syncOutlineAccessKeys = async (req, res) => {
+  try {
+    const { serverId } = req.params;
+    const userId = req.userId;
+
+    const server = await VpnServer.findById(serverId)
+      .select('+outline.adminAccessKey +outline.ssh.privateKey');
+    if (!server) {
+      return res.status(404).json({ error: 'Server not found' });
+    }
+
+    console.log('[syncOutlineAccessKeys] Server type:', server.vpnType);
+    console.log('[syncOutlineAccessKeys] Outline config:', {
+      apiBaseUrl: server.outline?.apiBaseUrl,
+      apiPort: server.outline?.apiPort,
+      adminAccessKey: server.outline?.adminAccessKey ? 'SET' : 'MISSING',
+    });
+
+    if (server.vpnType !== 'outline') {
+      return res.status(400).json({ error: 'This server is not an Outline server' });
+    }
+
+    const vpnService = getVpnService(server);
+    console.log('[syncOutlineAccessKeys] VPN Service created:', {
+      baseUrl: vpnService.baseUrl,
+      apiPort: vpnService.apiPort,
+      adminAccessKey: vpnService.adminAccessKey ? 'SET' : 'MISSING',
+    });
+
+    try {
+      // Get all access keys from server
+      const accessKeysResponse = await vpnService.makeRequest('GET', 'access-keys');
+      const accessKeys = accessKeysResponse.accessKeys || [];
+
+      // Ensure indexes are properly configured before syncing
+      try {
+        await Device.collection.dropIndex('publicKey_1').catch(() => {});
+        await Device.syncIndexes();
+      } catch (err) {
+        console.warn('Could not sync Device indexes:', err.message);
+      }
+
+      // Drop old unique index on AccessKey if it exists
+      try {
+        await AccessKey.collection.dropIndex('accessKeyId_1').catch(() => {});
+        await AccessKey.syncIndexes();
+      } catch (err) {
+        console.warn('Could not sync AccessKey indexes:', err.message);
+      }
+
+      let syncedCount = 0;
+      let skippedCount = 0;
+
+      // Sync each access key
+      for (const remoteKey of accessKeys) {
+        // Check if already exists in DB
+        const existingAccessKey = await AccessKey.findOne({
+          server: serverId,
+          accessKeyId: remoteKey.id,
+        });
+
+        if (!existingAccessKey) {
+          // Create Device reference first (required for AccessKey)
+          const device = new Device({
+            name: remoteKey.name || `Access Key ${remoteKey.id}`,
+            server: serverId,
+            dataLimit: remoteKey.dataLimit || null,
+            isUnlimited: !remoteKey.dataLimit,
+            status: 'ACTIVE',
+            configFile: remoteKey.accessUrl,
+          });
+
+          await device.save();
+
+          // Create new AccessKey record with device reference
+          const accessKey = new AccessKey({
+            server: serverId,
+            user: null, // Not assigned to a user yet
+            device: device._id,
+            accessKeyId: remoteKey.id,
+            accessUrl: remoteKey.accessUrl,
+            name: remoteKey.name || `Access Key ${remoteKey.id}`,
+            dataLimit: remoteKey.dataLimit || null,
+            status: 'ACTIVE',
+          });
+
+          await accessKey.save();
+          syncedCount++;
+        } else {
+          skippedCount++;
+        }
+      }
+
+      // Update server stats
+      server.stats.totalUsers = accessKeys.length;
+      await server.save();
+
+      await logActivity(userId, 'SYNC_OUTLINE', 'SERVER', serverId, true);
+
+      res.json({
+        message: 'Outline access keys synced successfully',
+        synced: syncedCount,
+        skipped: skippedCount,
+        total: accessKeys.length,
+      });
+    } catch (error) {
+      return res.status(400).json({
+        error: `Failed to sync access keys: ${error.message}`,
+      });
+    }
+  } catch (error) {
+    console.error('Error syncing outline keys:', error);
     res.status(500).json({ error: error.message });
   }
 };
