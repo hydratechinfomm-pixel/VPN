@@ -4,13 +4,26 @@ import { authAPI } from '../api';
 
 export const AuthContext = createContext();
 
+// Generate a unique device ID
+const generateDeviceId = () => {
+  let deviceId = localStorage.getItem('deviceId');
+  if (!deviceId) {
+    deviceId = `device-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`;
+    localStorage.setItem('deviceId', deviceId);
+  }
+  return deviceId;
+};
+
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [token, setToken] = useState(localStorage.getItem('token'));
   const [loading, setLoading] = useState(true);
 
+
   // Check if user is logged in on mount
   useEffect(() => {
+    // Ensure device ID is generated on app load
+    generateDeviceId();
     const initAuth = async () => {
       if (token) {
         try {

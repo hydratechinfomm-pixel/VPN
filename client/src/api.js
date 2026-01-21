@@ -10,12 +10,19 @@ const api = axios.create({
   },
 });
 
-// Add token to requests
+// Add token and device ID to requests
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('token');
+  const deviceId = localStorage.getItem('deviceId');
+  
   if (token) {
     config.headers.Authorization = `Bearer ${token}`;
   }
+  
+  if (deviceId) {
+    config.headers['X-Device-Id'] = deviceId;
+  }
+  
   return config;
 });
 
@@ -41,6 +48,10 @@ export const authAPI = {
     api.post('/auth/change-password', { currentPassword, newPassword }),
   updateProfile: (profileData) => api.put('/auth/profile', profileData),
   refreshToken: (refreshToken) => api.post('/auth/refresh-token', { refreshToken }),
+  // Session Management
+  getActiveSessions: () => api.get('/auth/sessions'),
+  logoutOtherDevices: () => api.post('/auth/sessions/logout-others'),
+  logoutDevice: (deviceId) => api.post(`/auth/sessions/logout/${deviceId}`),
 };
 
 // Devices API

@@ -130,7 +130,7 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
                     checked={formData.vpnType === 'wireguard'}
                     onChange={handleChange}
                   />
-                  WireGuard (Peer-to-peer protocol)
+                  <span>🔷 WireGuard (Peer-to-peer protocol)</span>
                 </label>
                 <label>
                   <input
@@ -140,7 +140,7 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
                     checked={formData.vpnType === 'outline'}
                     onChange={handleChange}
                   />
-                  Outline (Easy-to-use VPN platform)
+                  <span>🔶 Outline (Easy-to-use VPN platform)</span>
                 </label>
               </div>
             </div>
@@ -323,7 +323,7 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
                       checked={formData.wireguardAccessMethod === 'local'}
                       onChange={handleChange}
                     />
-                    Local (WireGuard and panel on the same machine)
+                    <span>Local (WireGuard and panel on same machine)</span>
                   </label>
                   <label>
                     <input
@@ -333,7 +333,7 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
                       checked={formData.wireguardAccessMethod === 'ssh'}
                       onChange={handleChange}
                     />
-                    SSH (remote WireGuard server)
+                    <span>SSH (remote WireGuard server)</span>
                   </label>
                 </div>
               </div>
@@ -346,7 +346,7 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
               <h3>Outline Server Settings</h3>
 
               {/* JSON Import Section */}
-              <div className="form-group">
+              <div className="radio-group">
                 <label>
                   <input
                     type="checkbox"
@@ -451,7 +451,7 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
                       checked={formData.outlineAccessMethod === 'api'}
                       onChange={handleChange}
                     />
-                    API (Direct API calls)
+                    <span>API (Direct API calls)</span>
                   </label>
                   <label>
                     <input
@@ -461,7 +461,7 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
                       checked={formData.outlineAccessMethod === 'ssh'}
                       onChange={handleChange}
                     />
-                    SSH (Remote server via SSH)
+                    <span>SSH (Remote server via SSH)</span>
                   </label>
                 </div>
               </div>

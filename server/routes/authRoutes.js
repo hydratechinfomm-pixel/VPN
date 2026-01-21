@@ -68,4 +68,9 @@ router.put(
   authController.updateProfile
 );
 
+// Session Management
+router.get('/sessions', authController.getActiveSessions);
+router.post('/sessions/logout-others', authController.logoutOtherDevices);
+router.post('/sessions/logout/:deviceId', authController.logoutDevice);
+
 module.exports = router;

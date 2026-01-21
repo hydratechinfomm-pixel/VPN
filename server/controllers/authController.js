@@ -66,14 +66,45 @@ exports.login = async (req, res) => {
 
     await logActivity(user._id, 'LOGIN', 'USER', user._id, true);
 
+    // Generate tokens
     const token = AuthService.generateToken(user._id);
     const refreshToken = AuthService.generateRefreshToken(user._id);
+
+    // Extract device info from request
+    const userAgent = req.headers['user-agent'] || 'Unknown';
+    const ipAddress = req.ip || req.connection.remoteAddress;
+    const deviceId = req.headers['x-device-id'] || `device-${Date.now()}`;
+
+    // Add session to active sessions
+    const tokenExpiry = new Date();
+    tokenExpiry.setDate(tokenExpiry.getDate() + 7); // 7 days
+
+    user.activeSessions.push({
+      deviceId,
+      userAgent,
+      ipAddress,
+      token: token.substring(0, 20), // Store only token prefix for security
+      expiresAt: tokenExpiry,
+      isActive: true,
+    });
+
+    // Keep only last 10 sessions
+    if (user.activeSessions.length > 10) {
+      user.activeSessions = user.activeSessions.slice(-10);
+    }
+
+    user.securitySettings.lastLoginAt = new Date();
+    await user.save();
 
     res.json({
       message: 'Login successful',
       token,
       refreshToken,
       user: user.toJSON(),
+      session: {
+        deviceId,
+        createdAt: new Date(),
+      },
     });
   } catch (error) {
     console.error('Login error:', error);
@@ -162,6 +193,93 @@ exports.changePassword = async (req, res) => {
     await logActivity(user._id, 'CHANGE_PASSWORD', 'PROFILE', user._id, true);
 
     res.json({ message: 'Password changed successfully' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+/**
+ * Get active sessions
+ */
+exports.getActiveSessions = async (req, res) => {
+  try {
+    const userId = req.userId;
+    const user = await User.findById(userId);
+
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const sessions = user.activeSessions
+      .filter((s) => s.isActive && new Date(s.expiresAt) > new Date())
+      .map((s) => ({
+        deviceId: s.deviceId,
+        userAgent: s.userAgent,
+        ipAddress: s.ipAddress,
+        createdAt: s.createdAt,
+        expiresAt: s.expiresAt,
+      }));
+
+    res.json({
+      total: sessions.length,
+      sessions,
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+/**
+ * Logout from other devices
+ */
+exports.logoutOtherDevices = async (req, res) => {
+  try {
+    const userId = req.userId;
+    const currentDeviceId = req.headers['x-device-id'];
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Mark all other sessions as inactive
+    user.activeSessions.forEach((session) => {
+      if (session.deviceId !== currentDeviceId) {
+        session.isActive = false;
+      }
+    });
+
+    await user.save();
+    await logActivity(userId, 'LOGOUT_OTHER_DEVICES', 'SECURITY', userId, true);
+
+    res.json({ message: 'All other sessions logged out' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+};
+
+/**
+ * Logout specific device
+ */
+exports.logoutDevice = async (req, res) => {
+  try {
+    const userId = req.userId;
+    const { deviceId } = req.params;
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    const session = user.activeSessions.find((s) => s.deviceId === deviceId);
+    if (session) {
+      session.isActive = false;
+    }
+
+    await user.save();
+    await logActivity(userId, 'LOGOUT_DEVICE', 'SECURITY', userId, true);
+
+    res.json({ message: 'Device logged out successfully' });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }

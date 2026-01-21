@@ -14,9 +14,50 @@ const ProfilePage = () => {
     newPassword: '',
     confirmPassword: '',
   });
+  const [sessions, setSessions] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [sessionsLoading, setSessionsLoading] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [showSessions, setShowSessions] = useState(false);
+
+  // Fetch active sessions
+  const fetchSessions = async () => {
+    setSessionsLoading(true);
+    try {
+      const response = await authAPI.getActiveSessions();
+      setSessions(response.sessions || []);
+      setShowSessions(true);
+    } catch (err) {
+      setError('Failed to load sessions');
+    } finally {
+      setSessionsLoading(false);
+    }
+  };
+
+  // Logout from other devices
+  const handleLogoutOthers = async () => {
+    if (!window.confirm('Are you sure? This will logout all other devices.')) return;
+    try {
+      await authAPI.logoutOtherDevices();
+      setMessage('All other devices have been logged out');
+      await fetchSessions();
+    } catch (err) {
+      setError('Failed to logout other devices');
+    }
+  };
+
+  // Logout from specific device
+  const handleLogoutDevice = async (deviceId) => {
+    if (!window.confirm('Are you sure you want to logout this device?')) return;
+    try {
+      await authAPI.logoutDevice(deviceId);
+      setMessage('Device logged out successfully');
+      await fetchSessions();
+    } catch (err) {
+      setError('Failed to logout device');
+    }
+  };
 
   const handleProfileChange = (e) => {
     const { name, value } = e.target;
@@ -192,10 +233,82 @@ const ProfilePage = () => {
       </div>
 
       <div className="profile-actions">
+        <button className="btn-secondary" onClick={() => fetchSessions()}>
+          🔐 Manage Sessions
+        </button>
         <button className="btn-secondary" onClick={handleLogout}>
           Logout
         </button>
       </div>
+
+      {showSessions && (
+        <div className="sessions-section">
+          <div className="sessions-header">
+            <h3>Active Sessions</h3>
+            <button className="btn-danger-outline" onClick={handleLogoutOthers}>
+              Logout All Other Devices
+            </button>
+          </div>
+
+          {sessionsLoading ? (
+            <div className="loading">Loading sessions...</div>
+          ) : sessions.length === 0 ? (
+            <div className="empty-state">No active sessions</div>
+          ) : (
+            <div className="sessions-list">
+              {sessions.map((session) => {
+                const isCurrentDevice = session.deviceId === localStorage.getItem('deviceId');
+                const loginTime = new Date(session.createdAt);
+                const expiresTime = new Date(session.expiresAt);
+                
+                return (
+                  <div key={session.deviceId} className={`session-card ${isCurrentDevice ? 'current-device' : ''}`}>
+                    <div className="session-info">
+                      <div className="session-header">
+                        <h4>
+                          {isCurrentDevice && <span className="badge-current">Current Device</span>}
+                          {session.deviceId}
+                        </h4>
+                      </div>
+                      
+                      <div className="session-details">
+                        <div className="detail-row">
+                          <span className="label">📍 IP Address:</span>
+                          <span className="value">{session.ipAddress || 'Unknown'}</span>
+                        </div>
+                        
+                        <div className="detail-row">
+                          <span className="label">🔧 User Agent:</span>
+                          <span className="value">{session.userAgent?.substring(0, 60) || 'Unknown'}...</span>
+                        </div>
+                        
+                        <div className="detail-row">
+                          <span className="label">📅 Login Time:</span>
+                          <span className="value">{loginTime.toLocaleString()}</span>
+                        </div>
+                        
+                        <div className="detail-row">
+                          <span className="label">⏰ Expires:</span>
+                          <span className="value">{expiresTime.toLocaleString()}</span>
+                        </div>
+                      </div>
+
+                      {!isCurrentDevice && (
+                        <button 
+                          className="btn-danger-small" 
+                          onClick={() => handleLogoutDevice(session.deviceId)}
+                        >
+                          Logout This Device
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 };

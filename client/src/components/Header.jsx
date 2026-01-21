@@ -13,7 +13,7 @@ const Header = () => {
     <header className="header">
       <div className="header-content">
         <div className="header-left">
-          <h1 className="logo">WireGuard VPN</h1>
+          <h1 className="logo">VPN Control Panel</h1>
         </div>
         <div className="header-right">
           <div className="user-menu">

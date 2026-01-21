@@ -41,7 +41,7 @@ const DashboardStats = ({ stats, loading, servers = [] }) => {
   return (
     <>
       {/* VPN Type Filter */}
-      <div className="stats-filter">
+      {/* <div className="stats-filter">
         <label htmlFor="vpnTypeFilter">Filter by VPN Type:</label>
         <select
           id="vpnTypeFilter"
@@ -53,7 +53,7 @@ const DashboardStats = ({ stats, loading, servers = [] }) => {
           <option value="wireguard">WireGuard Only</option>
           <option value="outline">Outline Only</option>
         </select>
-      </div>
+      </div> */}
 
       <div className="stats-container">
         <div className="stat-card">

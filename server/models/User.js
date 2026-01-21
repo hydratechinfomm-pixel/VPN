@@ -86,6 +86,24 @@ const userSchema = new mongoose.Schema(
       },
       lockedUntil: Date,
     },
+    // Session management for tracking active logins
+    activeSessions: [
+      {
+        deviceId: String, // Browser/device identifier
+        userAgent: String,
+        ipAddress: String,
+        token: String,
+        createdAt: {
+          type: Date,
+          default: Date.now,
+        },
+        expiresAt: Date,
+        isActive: {
+          type: Boolean,
+          default: true,
+        },
+      },
+    ],
   },
   { timestamps: true }
 );
