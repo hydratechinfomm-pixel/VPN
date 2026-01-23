@@ -31,8 +31,14 @@ const planSchema = new mongoose.Schema(
     },
     billingCycle: {
       type: String,
-      enum: ['monthly', 'yearly', 'one-time'],
-      default: 'monthly',
+      enum: ['1-month', '2-months', '3-months', '6-months', '1-year'],
+      default: '1-month',
+    },
+    // Expiry months for device setup (default expiry period when plan is selected)
+    expiryMonths: {
+      type: Number,
+      default: 1,
+      min: 1,
     },
     // Features
     features: [String],

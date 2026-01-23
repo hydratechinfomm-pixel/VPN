@@ -2,6 +2,9 @@ const Device = require('../models/Device');
 const AccessKey = require('../models/AccessKey');
 const VpnServer = require('../models/VpnServer');
 const User = require('../models/User');
+const DeviceHistory = require('../models/DeviceHistory');
+const SalesTransaction = require('../models/SalesTransaction');
+const Plan = require('../models/Plan');
 const WireGuardService = require('../services/WireGuardService');
 const OutlineService = require('../services/OutlineService');
 const ConfigGenerator = require('../utils/ConfigGenerator');
@@ -22,8 +25,8 @@ function getVpnService(server) {
  */
 exports.createDevice = async (req, res) => {
   try {
-    const { serverId, name, planId, dataLimit, expiresAt } = req.body;
-    const userId = req.userId;
+    const { serverId, name, planId, dataLimit, expiresAt, userId: assignedUserId } = req.body;
+    const requesterId = req.userId;
 
     // Verify server exists - select hidden fields for Outline
     const server = await VpnServer.findById(serverId)
@@ -34,10 +37,34 @@ exports.createDevice = async (req, res) => {
 
     console.log('[createDevice] Creating device on', server.vpnType, 'server:', server.name);
 
-    // Check if user can create devices on this server
-    const user = await User.findById(userId);
-    if (!user.allowedServers.includes(serverId) && user.role !== 'admin') {
+    // Check if requester can create devices on this server
+    const requester = await User.findById(requesterId);
+    const isAdmin = requester.role?.toLowerCase() === 'admin';
+    const isModerator = requester.role?.toLowerCase() === 'moderator';
+
+    // Server access control:
+    // - Admin: can create on any server
+    // - Staff (moderator) + regular users: can only create on servers assigned in allowedServers
+    const hasServerAccess = Array.isArray(requester.allowedServers)
+      && requester.allowedServers.some((id) => String(id) === String(serverId));
+
+    if (!isAdmin && !hasServerAccess) {
       return res.status(403).json({ error: 'Access denied to this server' });
+    }
+
+    // Determine which user to assign the device to
+    // If assignedUserId is provided (and requester is admin/moderator), use it
+    // Otherwise assign to the requester
+    let deviceOwnerId = requesterId;
+    if (assignedUserId && (isAdmin || isModerator)) {
+      // Verify the assigned user exists
+      const assignedUser = await User.findById(assignedUserId);
+      if (!assignedUser) {
+        return res.status(404).json({ error: 'Assigned user not found' });
+      }
+      deviceOwnerId = assignedUserId;
+    } else if (assignedUserId && !isAdmin && !isModerator) {
+      return res.status(403).json({ error: 'Only admins and moderators can assign devices to other users' });
     }
 
     const vpnService = getVpnService(server);
@@ -55,9 +82,9 @@ exports.createDevice = async (req, res) => {
     }
 
     if (server.vpnType === 'wireguard') {
-      return await createWireGuardDevice(req, res, server, vpnService, userId, user);
+      return await createWireGuardDevice(req, res, server, vpnService, requesterId, deviceOwnerId, requester);
     } else if (server.vpnType === 'outline') {
-      return await createOutlineDevice(req, res, server, vpnService, userId, user);
+      return await createOutlineDevice(req, res, server, vpnService, requesterId, deviceOwnerId, requester);
     } else {
       return res.status(400).json({ error: 'Unsupported VPN type' });
     }
@@ -70,7 +97,7 @@ exports.createDevice = async (req, res) => {
 /**
  * Create WireGuard device
  */
-async function createWireGuardDevice(req, res, server, vpnService, userId, user) {
+async function createWireGuardDevice(req, res, server, vpnService, requesterId, deviceOwnerId, requester) {
   const { name, planId, dataLimit, expiresAt } = req.body;
 
   try {
@@ -97,7 +124,7 @@ async function createWireGuardDevice(req, res, server, vpnService, userId, user)
     // Create device record
     const device = new Device({
       name,
-      user: userId,
+      user: deviceOwnerId || null,
       server: server._id,
       plan: planId || null,
       publicKey: keyPair.publicKey,
@@ -121,16 +148,65 @@ async function createWireGuardDevice(req, res, server, vpnService, userId, user)
 
     await device.save();
 
-    // Add to user's devices
-    user.devices.push(device._id);
-    await user.save();
+    // Add to device owner's devices if assigned
+    let deviceOwnerUsername = undefined;
+    if (deviceOwnerId) {
+      const deviceOwner = await User.findById(deviceOwnerId);
+      if (deviceOwner) {
+        deviceOwnerUsername = deviceOwner.username;
+        deviceOwner.devices.push(device._id);
+        await deviceOwner.save();
+      }
+    }
 
     // Add to server's devices
     server.devices.push(device._id);
     server.stats.totalUsers += 1;
     await server.save();
 
-    await logActivity(userId, 'CREATE_DEVICE', 'DEVICE', device._id, true);
+    // Record sale transaction (only when plan is selected)
+    if (planId) {
+      try {
+        const plan = await Plan.findById(planId);
+        if (plan) {
+          await SalesTransaction.create({
+            deviceId: device._id,
+            deviceName: device.name,
+            plan: plan._id,
+            planName: plan.name,
+            planPrice: plan.price || 0,
+            planCurrency: plan.currency || 'USD',
+            planBillingCycle: plan.billingCycle,
+            server: server._id,
+            serverName: server.name,
+            serverType: server.serverType,
+            user: deviceOwnerId || null,
+            userName: deviceOwnerUsername,
+            createdBy: requesterId,
+            createdByName: requester?.username,
+            expiresAt: device.expiresAt,
+            metadata: {
+              deviceStatus: device.status,
+            },
+          });
+        }
+      } catch (e) {
+        console.error('[SalesTransaction] Failed to record sale:', e.message);
+      }
+    }
+
+    await logActivity(requesterId, 'CREATE_DEVICE', 'DEVICE', device._id, true);
+
+    // Log device history
+    await DeviceHistory.create({
+      device: device._id,
+      user: requesterId,
+      action: 'CREATED',
+      reason: 'manual',
+      metadata: {
+        notes: `WireGuard device created on server ${server.name}${deviceOwnerId && deviceOwnerId !== requesterId ? ` and assigned to user ${deviceOwnerId}` : ''}`,
+      },
+    });
 
     res.status(201).json({
       message: 'WireGuard device created successfully',
@@ -145,7 +221,7 @@ async function createWireGuardDevice(req, res, server, vpnService, userId, user)
 /**
  * Create Outline device (access key)
  */
-async function createOutlineDevice(req, res, server, vpnService, userId, user) {
+async function createOutlineDevice(req, res, server, vpnService, requesterId, deviceOwnerId, requester) {
   const { name, planId, dataLimit, expiresAt } = req.body;
 
   try {
@@ -163,7 +239,7 @@ async function createOutlineDevice(req, res, server, vpnService, userId, user) {
     // Create Device reference first (required for AccessKey)
     const device = new Device({
       name,
-      user: userId,
+      user: deviceOwnerId || null,
       server: server._id,
       plan: planId || null,
       dataLimit: dataLimit ? { bytes: dataLimit, isEnabled: true } : null,
@@ -178,7 +254,7 @@ async function createOutlineDevice(req, res, server, vpnService, userId, user) {
     // Create AccessKey document with device reference
     const accessKey = new AccessKey({
       server: server._id,
-      user: userId,
+      user: deviceOwnerId || null,
       device: device._id,
       accessKeyId: accessKeyData.accessKeyId,
       accessUrl: accessKeyData.accessUrl,
@@ -190,16 +266,69 @@ async function createOutlineDevice(req, res, server, vpnService, userId, user) {
 
     await accessKey.save();
 
-    // Add to user's devices
-    user.devices.push(device._id);
-    await user.save();
+    // Link device to access key
+    device.accessKey = accessKey._id;
+    await device.save();
+
+    // Add to device owner's devices if assigned
+    let deviceOwnerUsername = undefined;
+    if (deviceOwnerId) {
+      const deviceOwner = await User.findById(deviceOwnerId);
+      if (deviceOwner) {
+        deviceOwnerUsername = deviceOwner.username;
+        deviceOwner.devices.push(device._id);
+        await deviceOwner.save();
+      }
+    }
 
     // Add to server's devices
     server.devices.push(device._id);
     server.stats.totalUsers += 1;
     await server.save();
 
-    await logActivity(userId, 'CREATE_DEVICE', 'DEVICE', device._id, true);
+    // Record sale transaction (only when plan is selected)
+    if (planId) {
+      try {
+        const plan = await Plan.findById(planId);
+        if (plan) {
+          await SalesTransaction.create({
+            deviceId: device._id,
+            deviceName: device.name,
+            plan: plan._id,
+            planName: plan.name,
+            planPrice: plan.price || 0,
+            planCurrency: plan.currency || 'USD',
+            planBillingCycle: plan.billingCycle,
+            server: server._id,
+            serverName: server.name,
+            serverType: server.serverType,
+            user: deviceOwnerId || null,
+            userName: deviceOwnerUsername,
+            createdBy: requesterId,
+            createdByName: requester?.username,
+            expiresAt: device.expiresAt,
+            metadata: {
+              deviceStatus: device.status,
+            },
+          });
+        }
+      } catch (e) {
+        console.error('[SalesTransaction] Failed to record sale:', e.message);
+      }
+    }
+
+    await logActivity(requesterId, 'CREATE_DEVICE', 'DEVICE', device._id, true);
+
+    // Log device history
+    await DeviceHistory.create({
+      device: device._id,
+      user: requesterId,
+      action: 'CREATED',
+      reason: 'manual',
+      metadata: {
+        notes: `Outline device created on server ${server.name}${deviceOwnerId && deviceOwnerId !== requesterId ? ` and assigned to user ${deviceOwnerId}` : ''}`,
+      },
+    });
 
     res.status(201).json({
       message: 'Outline access key created successfully',
@@ -225,14 +354,19 @@ exports.getDevices = async (req, res) => {
     const userId = req.userId;
     const user = await User.findById(userId);
 
-    const query = { user: userId };
+    const query = {};
     if (serverId) query.server = serverId;
     if (status) query.status = status;
 
-    // Admin can see all devices
-    if (user.role === 'admin') {
-      delete query.user;
+    // Role-based filtering
+    const isAdmin = user.role?.toLowerCase() === 'admin';
+    const isModerator = user.role?.toLowerCase() === 'moderator';
+    
+    if (!isAdmin && !isModerator) {
+      // Regular users only see their assigned devices
+      query.user = userId;
     }
+    // Admin and moderators see all devices (no user filter)
 
     const devices = await Device.find(query)
       .populate('server', 'name host region vpnType')
@@ -363,40 +497,110 @@ exports.updateDevice = async (req, res) => {
     const { name, planId, dataLimit, expiresAt } = req.body;
     const userId = req.userId;
 
-    const device = await Device.findById(deviceId);
+    const device = await Device.findById(deviceId).populate('accessKey');
     if (!device) {
       return res.status(404).json({ error: 'Device not found' });
     }
 
     // Check authorization
     const user = await User.findById(userId);
-    if (device.user && device.user.toString() !== userId && user.role !== 'admin') {
+    const isAdmin = user.role?.toLowerCase() === 'admin';
+    const isModerator = user.role?.toLowerCase() === 'moderator';
+    if (device.user && device.user.toString() !== userId && !isAdmin && !isModerator) {
       return res.status(403).json({ error: 'Access denied' });
     }
 
-    if (name) device.name = name;
-    if (planId !== undefined) device.plan = planId;
-    if (expiresAt) device.expiresAt = expiresAt;
+    const changes = [];
+    const oldDeviceName = device.name; // Store old name for history
 
-    // Update data limit
+    // Track name change
+    if (name !== undefined && name !== device.name) {
+      changes.push({ field: 'name', oldValue: device.name, newValue: name });
+      device.name = name;
+    }
+
+    // Track plan change
+    if (planId !== undefined && planId !== device.plan?.toString()) {
+      changes.push({ field: 'plan', oldValue: device.plan, newValue: planId || null });
+      device.plan = planId || null;
+    }
+
+    // Track expiration date change
+    if (expiresAt !== undefined) {
+      const oldDate = device.expiresAt ? device.expiresAt.toISOString() : null;
+      const newDate = expiresAt ? new Date(expiresAt).toISOString() : null;
+      if (oldDate !== newDate) {
+        changes.push({ field: 'expiresAt', oldValue: device.expiresAt, newValue: expiresAt || null });
+        device.expiresAt = expiresAt || null;
+      }
+    }
+
+    // Track data limit change
     if (dataLimit !== undefined) {
-      if (dataLimit) {
-        device.dataLimit = { bytes: dataLimit, isEnabled: true };
-        device.isUnlimited = false;
-      } else {
-        device.isUnlimited = true;
-        device.dataLimit = { isEnabled: false };
+      const oldLimit = device.dataLimit?.bytes || null;
+      const newLimit = dataLimit || null;
+      
+      if (oldLimit !== newLimit) {
+        changes.push({ field: 'dataLimit', oldValue: oldLimit, newValue: newLimit });
+        
+        if (dataLimit) {
+          device.dataLimit = { bytes: dataLimit, isEnabled: true };
+          device.isUnlimited = false;
+        } else {
+          device.isUnlimited = true;
+          device.dataLimit = { isEnabled: false };
+        }
+
+        // Update Outline key data limit if applicable
+        const server = await VpnServer.findById(device.server)
+          .select('+outline.adminAccessKey +outline.ssh.privateKey');
+        if (server && server.vpnType === 'outline' && device.accessKey) {
+          try {
+            const outlineService = new OutlineService(server);
+            // Pass null for unlimited, or the actual limit value
+            // Don't use || 0 because that would set 1024 bytes instead of removing limit
+            await outlineService.setDataLimit(device.accessKey.accessKeyId, dataLimit || null);
+          } catch (error) {
+            console.error('Failed to update Outline data limit:', error.message);
+          }
+        }
       }
     }
 
     await device.save();
-    await logActivity(userId, 'UPDATE_DEVICE', 'DEVICE', device._id, true);
+    
+    // Only log activity and history if there are actual changes
+    if (changes.length > 0) {
+      await logActivity(userId, 'UPDATE_DEVICE', 'DEVICE', device._id, true);
+
+      // Log each change in history with device name in metadata
+      for (const change of changes) {
+        let action = 'UPDATED';
+        if (change.field === 'dataLimit') action = 'DATA_LIMIT_CHANGED';
+        else if (change.field === 'expiresAt') action = 'EXPIRE_DATE_CHANGED';
+        else if (change.field === 'name') action = 'NAME_CHANGED';
+        else if (change.field === 'plan') action = 'PLAN_CHANGED';
+
+        await DeviceHistory.create({
+          device: device._id,
+          user: userId,
+          action,
+          changes: change,
+          reason: 'manual',
+          metadata: {
+            deviceName: oldDeviceName,
+            notes: `${change.field} changed`,
+          },
+        });
+      }
+    }
 
     res.json({
-      message: 'Device updated successfully',
+      message: changes.length > 0 ? 'Device updated successfully' : 'No changes detected',
       device,
     });
   } catch (error) {
+    console.error('Error updating device:', error);
     res.status(500).json({ error: error.message });
   }
 };
@@ -463,6 +667,17 @@ exports.deleteDevice = async (req, res) => {
 
     await logActivity(userId, 'DELETE_DEVICE', 'DEVICE', deviceId, true);
 
+    // Log device history
+    await DeviceHistory.create({
+      device: deviceId,
+      user: userId,
+      action: 'DELETED',
+      reason: 'manual',
+      metadata: {
+        notes: `Device ${device.name} deleted from server ${server.name}`,
+      },
+    });
+
     res.json({ message: 'Device deleted successfully' });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -478,7 +693,7 @@ exports.toggleDeviceStatus = async (req, res) => {
     const { status, isEnabled } = req.body;
     const userId = req.userId;
 
-    const device = await Device.findById(deviceId).populate('server');
+    const device = await Device.findById(deviceId).populate('server').populate('plan');
     if (!device) {
       return res.status(404).json({ error: 'Device not found' });
     }
@@ -492,6 +707,11 @@ exports.toggleDeviceStatus = async (req, res) => {
     const server = device.server;
     const vpnService = getVpnService(server);
 
+    // Capture old values BEFORE making changes (for history logging)
+    const oldStatus = device.status;
+    const oldIsEnabled = device.isEnabled;
+
+    // Handle status change
     if (status) {
       const validStatuses = ['ACTIVE', 'SUSPENDED', 'DISABLED', 'EXPIRED'];
       if (!validStatuses.includes(status)) {
@@ -500,10 +720,126 @@ exports.toggleDeviceStatus = async (req, res) => {
       device.status = status;
     }
 
+    // Handle enable/disable and status changes for Outline
+    if (server.vpnType === 'outline') {
+      // For Outline, pause/resume via data limit API
+      if (device.accessKey) {
+        const accessKey = await AccessKey.findById(device.accessKey);
+        if (accessKey) {
+          try {
+            // Get server with admin keys
+            const fullServer = await VpnServer.findById(server._id)
+              .select('+outline.adminAccessKey +outline.ssh.privateKey');
+            const outlineService = new OutlineService(fullServer);
+            
+            // Determine if we should pause or resume
+            // Priority: status over isEnabled when both are provided
+            let shouldPause = false;
+            let shouldResume = false;
+            
+            if (status) {
+              // Status takes priority
+              shouldPause = status === 'SUSPENDED' || status === 'DISABLED';
+              shouldResume = status === 'ACTIVE';
+            } else if (isEnabled !== undefined) {
+              // Only use isEnabled if status is not provided
+              shouldPause = !isEnabled;
+              shouldResume = isEnabled;
+            }
+            
+            if (shouldPause) {
+              // Store original device.dataLimit.bytes before suspending
+              // This is the Device Override data that should be restored when resuming
+              const originalDeviceLimit = device.dataLimit?.bytes || null;
+              
+              // Store original device limit in accessKey metadata for later restoration
+              if (!accessKey.metadata) {
+                accessKey.metadata = {};
+              }
+              // Only store if not already stored (to preserve original value across multiple suspend/resume cycles)
+              if (accessKey.metadata.originalDeviceLimitBeforeSuspend === undefined) {
+                accessKey.metadata.originalDeviceLimitBeforeSuspend = originalDeviceLimit;
+                console.log(`[toggleDeviceStatus] Stored original device dataLimit before suspend: ${originalDeviceLimit === null ? 'unlimited' : originalDeviceLimit} bytes`);
+              } else {
+                console.log(`[toggleDeviceStatus] Original device limit already stored: ${accessKey.metadata.originalDeviceLimitBeforeSuspend === null ? 'unlimited' : accessKey.metadata.originalDeviceLimitBeforeSuspend} bytes`);
+              }
+              
+              // Update device.dataLimit (Device Override) to 0 bytes for suspend
+              // This updates the Device Override data to reflect the SUSPENDED state
+              device.dataLimit = { bytes: 0, isEnabled: true };
+              device.isUnlimited = false;
+              
+              // Also update Outline API limit to 0 bytes (blocks all usage)
+              await outlineService.setDataLimit(accessKey.accessKeyId, 0);
+              accessKey.status = 'SUSPENDED';
+              console.log(`[toggleDeviceStatus] Suspended Outline key ${accessKey.accessKeyId} - updated device.dataLimit to 0 bytes and Outline API limit to 0 bytes`);
+            } else if (shouldResume) {
+              // Resume by restoring original device.dataLimit.bytes
+              // Get the stored original device limit from metadata
+              let originalDeviceLimit = accessKey.metadata?.originalDeviceLimitBeforeSuspend;
+              
+              // If not stored in metadata, try to get from device's current value
+              // This handles cases where metadata was lost or device was suspended before this feature
+              if (originalDeviceLimit === undefined) {
+                // If device.dataLimit is currently 0 (from suspend), we need to check plan or set to unlimited
+                if (device.dataLimit?.bytes === 0) {
+                  // Device was suspended, check if it had a plan limit
+                  if (device.plan?.dataLimit?.bytes) {
+                    originalDeviceLimit = device.plan.dataLimit.bytes;
+                  } else {
+                    originalDeviceLimit = null; // Was unlimited
+                  }
+                } else {
+                  // Use current device limit (shouldn't happen if properly suspended, but handle it)
+                  originalDeviceLimit = device.dataLimit?.bytes || null;
+                }
+                console.log(`[toggleDeviceStatus] Original device limit not in metadata, calculated: ${originalDeviceLimit === null ? 'unlimited' : originalDeviceLimit} bytes`);
+              } else {
+                console.log(`[toggleDeviceStatus] Using stored original device limit: ${originalDeviceLimit === null ? 'unlimited' : originalDeviceLimit} bytes`);
+              }
+              
+              // Restore device.dataLimit (Device Override) to original value
+              if (originalDeviceLimit === null || originalDeviceLimit === undefined) {
+                // Restore to unlimited (no device override)
+                device.isUnlimited = true;
+                device.dataLimit = { isEnabled: false };
+              } else {
+                // Restore to original limit value
+                device.dataLimit = { bytes: originalDeviceLimit, isEnabled: true };
+                device.isUnlimited = false;
+              }
+              
+              // Restore the limit on Outline server
+              if (originalDeviceLimit === null || originalDeviceLimit === undefined) {
+                // Remove limit (set to unlimited) - pass null to setDataLimit
+                await outlineService.setDataLimit(accessKey.accessKeyId, null);
+                console.log(`[toggleDeviceStatus] Resuming Outline key ${accessKey.accessKeyId} - restored device.dataLimit to unlimited and Outline API to unlimited`);
+              } else {
+                // Restore original limit
+                await outlineService.setDataLimit(accessKey.accessKeyId, originalDeviceLimit);
+                console.log(`[toggleDeviceStatus] Resuming Outline key ${accessKey.accessKeyId} - restored device.dataLimit to ${originalDeviceLimit} bytes and Outline API to ${originalDeviceLimit} bytes`);
+              }
+              
+              // Clear the stored original device limit after successful resume
+              if (accessKey.metadata) {
+                delete accessKey.metadata.originalDeviceLimitBeforeSuspend;
+              }
+              
+              accessKey.status = 'ACTIVE';
+            }
+            await accessKey.save();
+          } catch (error) {
+            console.error('Failed to pause/resume Outline key:', error.message);
+            throw new Error(`Failed to update Outline key: ${error.message}`);
+          }
+        }
+      }
+    }
+
+    // Handle enable/disable for WireGuard
     if (isEnabled !== undefined) {
       device.isEnabled = isEnabled;
       
-      // Handle enable/disable based on VPN type
       if (server.vpnType === 'wireguard') {
         if (!isEnabled) {
           // If disabling, remove peer temporarily
@@ -520,21 +856,50 @@ exports.toggleDeviceStatus = async (req, res) => {
             console.error('Failed to add WireGuard peer:', error);
           }
         }
-      } else if (server.vpnType === 'outline') {
-        // For Outline, disable/enable is managed via status changes
-        // Access keys remain in Outline, just change local status
-        if (device.accessKey) {
-          const accessKey = await AccessKey.findById(device.accessKey);
-          if (accessKey) {
-            accessKey.status = isEnabled ? 'ACTIVE' : 'DISABLED';
-            await accessKey.save();
-          }
-        }
       }
     }
 
     await device.save();
     await logActivity(userId, 'TOGGLE_DEVICE', 'DEVICE', device._id, true);
+
+    // Log device history
+    // Priority: status over isEnabled when both are provided (matches suspend/resume logic)
+    let historyAction;
+    let historyField;
+    let historyOldValue;
+    let historyNewValue;
+    
+    if (status) {
+      // Status takes priority - log status change
+      historyAction = status === 'ACTIVE' ? 'RESUMED' : (status === 'SUSPENDED' ? 'PAUSED' : 'STATUS_CHANGED');
+      historyField = 'status';
+      historyOldValue = oldStatus;
+      historyNewValue = status;
+    } else if (isEnabled !== undefined) {
+      // Only use isEnabled if status is not provided
+      historyAction = isEnabled ? 'ENABLED' : 'DISABLED';
+      historyField = 'isEnabled';
+      historyOldValue = oldIsEnabled;
+      historyNewValue = isEnabled;
+    } else {
+      // No changes made, skip history logging
+      return res.json({
+        message: 'Device status updated',
+        device,
+      });
+    }
+    
+    await DeviceHistory.create({
+      device: device._id,
+      user: userId,
+      action: historyAction,
+      changes: {
+        field: historyField,
+        oldValue: historyOldValue,
+        newValue: historyNewValue,
+      },
+      reason: 'manual',
+    });
 
     res.json({
       message: 'Device status updated',

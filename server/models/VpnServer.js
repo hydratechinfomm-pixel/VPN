@@ -48,6 +48,12 @@ const vpnServerSchema = new mongoose.Schema(
       enum: ['AWS', 'Google Cloud', 'Azure', 'DigitalOcean', 'Linode', 'Custom'],
       default: 'Custom',
     },
+    // Server tier/type for categorization
+    serverType: {
+      type: String,
+      enum: ['REGULAR', 'PREMIUM', 'ENTERPRISE'],
+      default: 'REGULAR',
+    },
     isActive: {
       type: Boolean,
       default: true,

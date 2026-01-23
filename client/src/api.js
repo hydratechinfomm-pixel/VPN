@@ -67,6 +67,7 @@ export const devicesAPI = {
   getConfig: (deviceId) => api.get(`/devices/${deviceId}/config`, { responseType: 'blob' }),
   getQR: (deviceId) => api.get(`/devices/${deviceId}/qr`),
   disconnect: (deviceId) => api.post(`/devices/${deviceId}/disconnect`),
+  getHistory: (deviceId) => api.get(`/devices/${deviceId}/history`),
 };
 
 // Plans API
@@ -109,6 +110,14 @@ export const usersAPI = {
   getActivityLogs: (userId, action, limit) =>
     api.get(`/users/${userId}/activity`, { params: { action, limit } }),
   getDataUsage: (userId) => api.get(`/users/${userId}/data-usage`),
+};
+
+// Sales API
+export const salesAPI = {
+  getReport: (filters) => api.get('/sales/report', { params: filters }),
+  getSummary: (filters) => api.get('/sales/summary', { params: filters }),
+  getByPeriod: (period, filters) =>
+    api.get('/sales/by-period', { params: { ...filters, period } }),
 };
 
 export default api;

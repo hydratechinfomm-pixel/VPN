@@ -33,14 +33,57 @@ exports.getAllServers = async (req, res) => {
       .populate('devices')
       .sort({ createdAt: -1 });
 
+    // Calculate bandwidth usage for each server
+    // Note: This shows total cumulative usage from all devices on the server
+    // Since we don't have historical tracking per time period, this represents
+    // total usage since devices were created (or last reset)
+    // Usage data is updated every 5 minutes by cron jobs
+    const serversWithUsage = await Promise.all(
+      servers.map(async (server) => {
+        const serverObj = server.toObject();
+        
+        // Get all devices on this server
+        const devices = await Device.find({ server: server._id });
+        
+        // Calculate total bandwidth usage from all devices
+        let totalBandwidth = 0;
+        for (const device of devices) {
+          // For Outline devices, use totalBytesUsed if available, otherwise sum sent+received
+          if (server.vpnType === 'outline' && device.totalBytesUsed !== undefined) {
+            totalBandwidth += device.totalBytesUsed || 0;
+          } else {
+            // For WireGuard or devices without totalBytesUsed
+            totalBandwidth += (device.usage?.bytesSent || 0) + (device.usage?.bytesReceived || 0);
+          }
+        }
+        
+        // Add bandwidth usage to server object
+        serverObj.bandwidthUsage30Days = totalBandwidth;
+        serverObj.bandwidthUsageFormatted = formatBytes(totalBandwidth);
+        
+        return serverObj;
+      })
+    );
+
     res.json({
-      total: servers.length,
-      servers,
+      total: serversWithUsage.length,
+      servers: serversWithUsage,
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 };
+
+/**
+ * Helper function to format bytes
+ */
+function formatBytes(bytes) {
+  if (!bytes || bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return Math.round((bytes / Math.pow(k, i)) * 100) / 100 + ' ' + sizes[i];
+}
 
 /**
  * Get user's accessible servers
@@ -74,6 +117,7 @@ exports.createServer = async (req, res) => {
       host,
       port,
       vpnType = 'wireguard',
+      serverType = 'REGULAR',
       region,
       country,
       city,
@@ -113,6 +157,7 @@ exports.createServer = async (req, res) => {
       host,
       port: port || (vpnType === 'wireguard' ? 51820 : 443),
       vpnType,
+      serverType,
       apiUrl: `https://${host}`,
       region,
       country,
@@ -219,7 +264,7 @@ exports.getServer = async (req, res) => {
 exports.updateServer = async (req, res) => {
   try {
     const { serverId } = req.params;
-    const { name, description, region, country, city, provider } = req.body;
+    const { name, description, serverType, region, country, city, provider } = req.body;
 
     const server = await VpnServer.findById(serverId)
       .select('+outline.adminAccessKey +outline.ssh.privateKey');
@@ -233,6 +278,7 @@ exports.updateServer = async (req, res) => {
     if (country) server.country = country;
     if (city) server.city = city;
     if (provider) server.provider = provider;
+    if (serverType) server.serverType = serverType;
 
     await server.save();
     await logActivity(req.userId, 'UPDATE_SERVER', 'SERVER', server._id, true);
@@ -315,7 +361,10 @@ exports.healthCheckServer = async (req, res) => {
   try {
     const { serverId } = req.params;
 
-    const server = await VpnServer.findById(serverId);
+    // Load server with admin keys for Outline
+    const server = await VpnServer.findById(serverId)
+      .select('+outline.adminAccessKey +outline.ssh.privateKey +wireguard.ssh.privateKey');
+    
     if (!server) {
       return res.status(404).json({ error: 'Server not found' });
     }
@@ -332,9 +381,14 @@ exports.healthCheckServer = async (req, res) => {
       vpnType: server.vpnType,
       isHealthy,
       lastCheck: server.stats.lastHealthCheck,
+      message: isHealthy ? 'Server is healthy' : 'Server is not responding',
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('[healthCheckServer] Error:', error);
+    res.status(500).json({ 
+      error: error.message,
+      isHealthy: false,
+    });
   }
 };
 

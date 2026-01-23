@@ -37,6 +37,12 @@ const Sidebar = () => {
         {(user?.role?.toLowerCase() === 'admin' || user?.role?.toLowerCase() === 'moderator') && (
           <>
             <Link
+              to="/history"
+              className={`nav-item ${isActive('/history') ? 'active' : ''}`}
+            >
+              📜 History
+            </Link>
+            <Link
               to="/plans"
               className={`nav-item ${isActive('/plans') ? 'active' : ''}`}
             >
@@ -47,6 +53,12 @@ const Sidebar = () => {
               className={`nav-item ${isActive('/users') ? 'active' : ''}`}
             >
               👥 Users
+            </Link>
+            <Link
+              to="/sales-report"
+              className={`nav-item ${isActive('/sales-report') ? 'active' : ''}`}
+            >
+              💰 Sales Report
             </Link>
           </>
         )}

@@ -7,9 +7,11 @@ import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import DashboardPage from './pages/DashboardPage';
 import DevicesPage from './pages/DevicesPage';
+import HistoryPage from './pages/HistoryPage';
 import PlansPage from './pages/PlansPage';
 import ServersPage from './pages/ServersPage';
 import UsersPage from './pages/UsersPage';
+import SalesReportPage from './pages/SalesReportPage';
 import ProfilePage from './pages/ProfilePage';
 import NotFoundPage from './pages/NotFoundPage';
 
@@ -94,6 +96,15 @@ function App() {
           />
 
           <Route
+            path="/history"
+            element={
+              <ProtectedRoute requiredPanelAdmin>
+                <AppLayout><HistoryPage /></AppLayout>
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
             path="/profile"
             element={
               <ProtectedRoute>
@@ -126,6 +137,15 @@ function App() {
             element={
               <ProtectedRoute requiredPanelAdmin>
                 <AppLayout><UsersPage /></AppLayout>
+              </ProtectedRoute>
+            }
+          />
+
+          <Route
+            path="/sales-report"
+            element={
+              <ProtectedRoute requiredPanelAdmin>
+                <AppLayout><SalesReportPage /></AppLayout>
               </ProtectedRoute>
             }
           />

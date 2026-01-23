@@ -6,6 +6,7 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
     name: server?.name || '',
     description: server?.description || '',
     vpnType: server?.vpnType || 'wireguard', // 'wireguard' or 'outline'
+    serverType: server?.serverType || 'REGULAR', // Server tier
     region: server?.region || '',
     provider: server?.provider || 'Custom',
     country: server?.country || '',
@@ -145,6 +146,23 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
               </div>
             </div>
           )}
+
+          {/* Server Type selector */}
+          <div className="form-group">
+            <label htmlFor="serverType">Server Type *</label>
+            <select
+              id="serverType"
+              name="serverType"
+              value={formData.serverType}
+              onChange={handleChange}
+              required
+            >
+              <option value="REGULAR">Regular (Standard servers)</option>
+              <option value="PREMIUM">Premium (High-performance servers)</option>
+              <option value="ENTERPRISE">Enterprise (Dedicated servers)</option>
+            </select>
+            <small>Choose the server tier/category for this VPN server</small>
+          </div>
 
           {/* Basic server details */}
           <div className="form-row">
@@ -421,7 +439,6 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
                   name="outlineAdminAccessKey"
                   value={formData.outlineAdminAccessKey}
                   onChange={handleChange}
-                  required
                   placeholder="Paste admin access key from Outline server"
                 />
                 <small>Get this from your Outline server management interface</small>

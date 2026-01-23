@@ -7,7 +7,7 @@ const { logActivity } = require('../middleware/auth');
  */
 exports.createPlan = async (req, res) => {
   try {
-    const { name, description, dataLimit, isUnlimited, price, currency, billingCycle, features } = req.body;
+    const { name, description, dataLimit, isUnlimited, price, currency, billingCycle, expiryMonths, features } = req.body;
 
     // Check if plan name already exists
     const existingPlan = await Plan.findOne({ name });
@@ -24,7 +24,8 @@ exports.createPlan = async (req, res) => {
       },
       price: price || 0,
       currency: currency || 'USD',
-      billingCycle: billingCycle || 'monthly',
+      billingCycle: billingCycle || '1-month',
+      expiryMonths: expiryMonths || 1,
       features: features || [],
     });
 
@@ -87,7 +88,7 @@ exports.getPlan = async (req, res) => {
 exports.updatePlan = async (req, res) => {
   try {
     const { planId } = req.params;
-    const { name, description, dataLimit, isUnlimited, price, currency, billingCycle, features, isActive } = req.body;
+    const { name, description, dataLimit, isUnlimited, price, currency, billingCycle, expiryMonths, features, isActive } = req.body;
 
     const plan = await Plan.findById(planId);
     if (!plan) {
@@ -99,6 +100,7 @@ exports.updatePlan = async (req, res) => {
     if (price !== undefined) plan.price = price;
     if (currency) plan.currency = currency;
     if (billingCycle) plan.billingCycle = billingCycle;
+    if (expiryMonths !== undefined) plan.expiryMonths = expiryMonths;
     if (features) plan.features = features;
     if (isActive !== undefined) plan.isActive = isActive;
 

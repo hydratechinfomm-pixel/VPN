@@ -1,6 +1,7 @@
 const express = require('express');
 const { body } = require('express-validator');
 const userController = require('../controllers/userController');
+const deviceHistoryController = require('../controllers/deviceHistoryController');
 const { authenticateToken, authorizeAdmin, authorizePanelAdmin } = require('../middleware/auth');
 const { validateRequest } = require('../middleware/validation');
 
@@ -17,7 +18,9 @@ router.post(
     body('password').isLength({ min: 6 }),
     body('firstName').optional().trim(),
     body('lastName').optional().trim(),
-    body('role').isIn(['admin', 'moderator']),
+    body('role').isIn(['admin', 'moderator', 'user']),
+    body('phone').optional().trim(),
+    body('nickname').optional().trim(),
   ],
   validateRequest,
   userController.createPanelUser
@@ -34,6 +37,9 @@ router.get('/:userId/activity', userController.getUserActivityLogs);
 
 // Get user data usage
 router.get('/:userId/data-usage', userController.getUserDataUsage);
+
+// Get user devices history
+router.get('/:userId/devices-history', deviceHistoryController.getUserDevicesHistory);
 
 // Get user by ID
 router.get('/:userId', userController.getUser);

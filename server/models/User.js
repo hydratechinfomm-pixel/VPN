@@ -72,6 +72,7 @@ const userSchema = new mongoose.Schema(
     },
     profile: {
       phone: String,
+      nickname: String,
       country: String,
       timezone: String,
       avatar: String,
@@ -129,7 +130,9 @@ userSchema.methods.comparePassword = async function (password) {
 userSchema.methods.toJSON = function () {
   const obj = this.toObject();
   delete obj.password;
-  delete obj.securitySettings.twoFactorSecret;
+  if (obj.securitySettings) {
+    delete obj.securitySettings.twoFactorSecret;
+  }
   return obj;
 };
 

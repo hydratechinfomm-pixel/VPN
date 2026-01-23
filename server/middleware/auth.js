@@ -119,6 +119,7 @@ async function logActivity(
   } catch (error) {
     console.error('Failed to log activity:', error.message);
   }
+  console.log(`Activity Logged: User ${userId}, Action: ${action}, Resource: ${resource}, Resource ID: ${resourceId}, Status: ${success ? 'SUCCESS' : 'FAILED'}`);
 }
 
 exports.logActivity = logActivity;

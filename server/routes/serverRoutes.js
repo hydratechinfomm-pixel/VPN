@@ -97,6 +97,7 @@ router.put(
     body('description').optional().trim(),
     body('region').optional().isIn(['US', 'EU', 'ASIA', 'SOUTH_AMERICA', 'AFRICA', 'OCEANIA']),
     body('provider').optional().isIn(['AWS', 'Google Cloud', 'Azure', 'DigitalOcean', 'Linode', 'Custom']),
+    body('serverType').optional().isIn(['REGULAR', 'PREMIUM', 'ENTERPRISE']),
   ],
   validateRequest,
   serverController.updateServer

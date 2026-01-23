@@ -1,13 +1,16 @@
-import React, { useState, useEffect } from 'react';
-import { devicesAPI, serversAPI, plansAPI } from '../api';
+import React, { useState, useEffect, useContext } from 'react';
+import { devicesAPI, serversAPI, plansAPI, usersAPI } from '../api';
+import { AuthContext } from '../context/AuthContext';
 import DeviceForm from '../components/DeviceForm';
 import DeviceList from '../components/DeviceList';
 import '../styles/devices.css';
 
 const DevicesPage = () => {
+  const { user } = useContext(AuthContext);
   const [devices, setDevices] = useState([]);
   const [servers, setServers] = useState([]);
   const [plans, setPlans] = useState([]);
+  const [users, setUsers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [showForm, setShowForm] = useState(false);
@@ -22,14 +25,16 @@ const DevicesPage = () => {
   const fetchData = async () => {
     try {
       setLoading(true);
-      const [devicesResponse, serversResponse, plansResponse] = await Promise.all([
+      const [devicesResponse, serversResponse, plansResponse, usersResponse] = await Promise.all([
         devicesAPI.getAll(selectedServerId || undefined),
         serversAPI.getAll(),
         plansAPI.getAll(true),
+        usersAPI.getAll().catch(() => ({ users: [] })), // Fetch users, but don't fail if it errors
       ]);
       const devicesList = Array.isArray(devicesResponse) ? devicesResponse : devicesResponse?.devices || [];
       const serversList = Array.isArray(serversResponse) ? serversResponse : serversResponse?.servers || [];
       const plansList = Array.isArray(plansResponse) ? plansResponse : plansResponse?.plans || [];
+      const usersList = Array.isArray(usersResponse) ? usersResponse : usersResponse?.users || [];
       
       // Filter devices by server type if selected
       let filteredDevices = devicesList;
@@ -42,6 +47,7 @@ const DevicesPage = () => {
       setDevices(filteredDevices);
       setServers(serversList);
       setPlans(plansList);
+      setUsers(usersList);
     } catch (err) {
       setError('Failed to load data');
       console.error(err);
@@ -112,13 +118,17 @@ const DevicesPage = () => {
     return <div className="loading-screen">Loading devices...</div>;
   }
 
+  const isAdminOrModerator = user && (user.role === 'admin' || user.role === 'moderator');
+
   return (
     <div className="accesskeys-page">
       <div className="page-header">
         <h1>Devices Management</h1>
-        <button className="btn-primary" onClick={handleAddDevice}>
-          + Add Device
-        </button>
+        {isAdminOrModerator && (
+          <button className="btn-primary" onClick={handleAddDevice}>
+            + Add Device
+          </button>
+        )}
       </div>
 
       {error && <div className="alert alert-error">{error}</div>}
@@ -160,6 +170,8 @@ const DevicesPage = () => {
           deviceData={editingDevice}
           servers={servers}
           plans={plans}
+          users={users}
+          user={user}
           onSubmit={handleFormSubmit}
           onCancel={() => {
             setShowForm(false);

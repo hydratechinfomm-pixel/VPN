@@ -35,6 +35,7 @@ app.use('/api/devices', require('./routes/deviceRoutes'));
 app.use('/api/plans', require('./routes/planRoutes'));
 app.use('/api/servers', require('./routes/serverRoutes'));
 app.use('/api/users', require('./routes/userRoutes'));
+app.use('/api/sales', require('./routes/salesRoutes'));
 
 // 404 handler
 app.use((req, res) => {

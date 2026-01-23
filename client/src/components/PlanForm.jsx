@@ -10,7 +10,8 @@ const PlanForm = ({ planData, onSubmit, onCancel }) => {
       : '',
     price: planData?.price || 0,
     currency: planData?.currency || 'USD',
-    billingCycle: planData?.billingCycle || 'monthly',
+    billingCycle: planData?.billingCycle || '1-month',
+    expiryMonths: planData?.expiryMonths || 1,
     features: planData?.features?.join(', ') || '',
     isActive: planData?.isActive !== undefined ? planData.isActive : true,
   });
@@ -136,9 +137,7 @@ const PlanForm = ({ planData, onSubmit, onCancel }) => {
                 onChange={handleChange}
               >
                 <option value="USD">USD</option>
-                <option value="EUR">EUR</option>
-                <option value="GBP">GBP</option>
-                <option value="JPY">JPY</option>
+                <option value="MMK">MMK</option>
               </select>
             </div>
 
@@ -150,10 +149,26 @@ const PlanForm = ({ planData, onSubmit, onCancel }) => {
                 value={formData.billingCycle}
                 onChange={handleChange}
               >
-                <option value="monthly">Monthly</option>
-                <option value="yearly">Yearly</option>
-                <option value="one-time">One-time</option>
+                <option value="1-month">1 Month</option>
+                <option value="2-months">2 Months</option>
+                <option value="3-months">3 Months</option>
+                <option value="6-months">6 Months</option>
+                <option value="1-year">1 Year</option>
               </select>
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="expiryMonths">Expiry Months (for device setup)</label>
+              <input
+                type="number"
+                id="expiryMonths"
+                name="expiryMonths"
+                value={formData.expiryMonths}
+                onChange={handleChange}
+                min="1"
+                step="1"
+              />
+              <small>Default expiry period when this plan is selected during device setup</small>
             </div>
           </div>
 

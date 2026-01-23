@@ -4,33 +4,59 @@ const { logActivity } = require('../middleware/auth');
 const constants = require('../config/constants');
 
 /**
- * Create panel user (admin only) - role must be admin or moderator
+ * Create user (admin only) - role can be admin, moderator, or user
+ * For 'user' role, phone and nickname are required
  */
 exports.createPanelUser = async (req, res) => {
   try {
-    const { username, email, password, firstName, lastName, role } = req.body;
+    const { username, email, password, firstName, lastName, role, phone, nickname } = req.body;
+
+    // Validate phone and nickname for user role
+    if (role === 'user') {
+      if (!phone || !phone.trim()) {
+        return res.status(400).json({ error: 'Phone number is required for user role' });
+      }
+      if (!nickname || !nickname.trim()) {
+        return res.status(400).json({ error: 'Nickname is required for user role' });
+      }
+    }
 
     const existing = await User.findOne({ $or: [{ email: email?.toLowerCase() }, { username: username?.toLowerCase() }] });
     if (existing) {
       return res.status(400).json({ error: 'User with this email or username already exists' });
     }
 
-    const user = new User({
+    // Determine valid role
+    let userRole = constants.ROLES.USER;
+    if (role === 'admin') userRole = constants.ROLES.ADMIN;
+    else if (role === 'moderator') userRole = constants.ROLES.MODERATOR;
+    else if (role === 'user') userRole = constants.ROLES.USER;
+
+    const userData = {
       username: username?.trim().toLowerCase(),
       email: email?.toLowerCase(),
       password,
       firstName: firstName?.trim(),
       lastName: lastName?.trim(),
-      role: role === 'admin' || role === 'moderator' ? role : constants.ROLES.MODERATOR,
+      role: userRole,
       plan: 'FREE',
       isActive: true,
-    });
+    };
+
+    // Add phone and nickname to profile for user role
+    if (role === 'user' && (phone || nickname)) {
+      userData.profile = {};
+      if (phone) userData.profile.phone = phone.trim();
+      if (nickname) userData.profile.nickname = nickname.trim();
+    }
+
+    const user = new User(userData);
 
     await user.save();
-    await logActivity(req.userId, 'CREATE_PANEL_USER', 'USER', user._id, true);
+    await logActivity(req.userId, 'CREATE_USER', 'USER', user._id, true);
 
     res.status(201).json({
-      message: 'Panel user created successfully',
+      message: 'User created successfully',
       user: user.toJSON(),
     });
   } catch (error) {

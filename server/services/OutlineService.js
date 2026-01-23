@@ -48,7 +48,10 @@ class OutlineService extends VpnService {
       };
 
       let timedOut = false;
-
+      // console.log('Options:', options);
+      // console.log('path: ${path}', path);
+      // console.log('method: ${method}', method);
+      // console.log('body: ${body}', body);
       const req = protocol.request(options, (res) => {
         let data = '';
         res.on('data', (chunk) => {
@@ -133,7 +136,18 @@ class OutlineService extends VpnService {
       const response = await this.makeRequest('POST', 'access-keys', createKeyBody);
 
       console.log('[OutlineService] Access key created, response:', response);
-
+      const setDatalimit = async () => {
+        if (limit && limit > 0) {
+          try {
+            await this.setDataLimit(response.id, limit);
+            console.log('[OutlineService] Data limit set successfully after key creation');
+          } catch (err) {
+            console.error('[OutlineService] Error setting data limit after key creation:', err.message);
+          }
+        }
+      };
+      // Set data limit asynchronously
+      setDatalimit();
       return {
         success: true,
         accessKeyId: response.id,
@@ -229,9 +243,27 @@ class OutlineService extends VpnService {
    */
   async updateUserConfig(accessKeyId, config) {
     try {
+      const keyId = String(accessKeyId);
       const updateBody = {};
 
-      if (config.name) {
+      // Fetch current key to get name (required by Outline API)
+      let currentKey = null;
+      try {
+        const accessKeysResponse = await this.makeRequest('GET', 'access-keys');
+        const accessKeys = accessKeysResponse.accessKeys || [];
+        currentKey = accessKeys.find((key) => {
+          const keyIdStr = String(key.id);
+          const keyIdNum = Number(key.id);
+          return keyIdStr === keyId || String(keyIdNum) === keyId || keyIdNum === Number(keyId);
+        });
+      } catch (err) {
+        console.warn(`[updateUserConfig] Could not fetch current key: ${err.message}`);
+      }
+
+      // Always include name if we have it (Outline API requires it)
+      if (currentKey && currentKey.name !== undefined) {
+        updateBody.name = config.name || currentKey.name || '';
+      } else if (config.name) {
         updateBody.name = config.name;
       }
 
@@ -250,7 +282,9 @@ class OutlineService extends VpnService {
         };
       }
 
-      await this.makeRequest('PUT', `access-keys/${accessKeyId}`, updateBody);
+      // Use the actual ID from server if available
+      const actualKeyId = currentKey ? String(currentKey.id) : keyId;
+      await this.makeRequest('PUT', `access-keys/${actualKeyId}`, updateBody);
 
       return {
         success: true,
@@ -350,24 +384,108 @@ class OutlineService extends VpnService {
   }
 
   /**
-   * Set data limit for user
-   */
+ * Set data limit for user
+ */
   async setDataLimit(accessKeyId, limitBytes) {
     try {
-      const body = {
-        limit: limitBytes > 0 ? { bytes: limitBytes } : null,
-      };
-
-      await this.makeRequest('PUT', `access-keys/${accessKeyId}`, body);
-
-      return {
-        success: true,
-        message: limitBytes > 0 
-          ? `Data limit set to ${limitBytes} bytes` 
-          : 'Data limit removed (unlimited)',
-      };
+      // Validate accessKeyId
+      if (!accessKeyId) {
+        throw new Error('Access key ID is required');
+      }
+      
+      // Fetch current key to get the actual ID format from server (like updateUserConfig does)
+      let actualKeyId = String(accessKeyId);
+      try {
+        const accessKeysResponse = await this.makeRequest('GET', 'access-keys');
+        const accessKeys = accessKeysResponse.accessKeys || [];
+        const currentKey = accessKeys.find((key) => {
+          const keyIdStr = String(key.id);
+          const keyIdNum = Number(key.id);
+          return keyIdStr === String(accessKeyId) || String(keyIdNum) === String(accessKeyId) || keyIdNum === Number(accessKeyId);
+        });
+        
+        if (currentKey) {
+          actualKeyId = String(currentKey.id);
+          console.log(`[setDataLimit] Found access key, using ID: ${actualKeyId}`);
+        } else {
+          console.warn(`[setDataLimit] Access key ${accessKeyId} not found in server, using provided ID: ${actualKeyId}`);
+        }
+      } catch (err) {
+        console.warn(`[setDataLimit] Could not fetch current key: ${err.message}, using provided ID: ${actualKeyId}`);
+      }
+      
+      // When limitBytes is 0, set to 0 bytes (blocks usage) - used for suspending devices
+      // When limitBytes is null/undefined/negative, set to null to remove limit (unlimited)
+      // When limitBytes > 0, set specific limit
+      // For /data-limit endpoint, body format is { bytes: N } or null
+      let updateBody;
+      if (limitBytes === 0) {
+        // Set to 0 bytes to block usage (suspend)
+        updateBody = { bytes: 10 };
+      } else if (limitBytes > 0) {
+        // Set specific limit
+        updateBody = { bytes: limitBytes };
+      } else {
+        // Remove limit (unlimited) - limitBytes is null, undefined, or negative
+        // For Outline API, to remove limit we pass null
+        updateBody = null;
+      }
+      
+      console.log(`[setDataLimit] Attempting to update access key ${actualKeyId} with limit:`, updateBody);
+      
+      try {
+        // Use correct Outline API endpoint: PUT /access-keys/:id/data-limit
+        // Note: makeRequest already handles JSON.stringify, so pass updateBody directly (not stringified)
+        // When updateBody is null, makeRequest will handle it correctly (won't write body if null)
+        const result = await this.makeRequest('PUT', `access-keys/${actualKeyId}/data-limit`,
+          {
+            "limit": {
+              "bytes": updateBody.bytes
+            }
+          }
+        );
+        console.log('[setDataLimit] Outline service result:', result);
+        return {
+          success: true,
+          message: limitBytes === 0 
+            ? 'Data limit set to 0 bytes (blocked)'
+            : limitBytes > 0 
+            ? `Data limit set to ${limitBytes} bytes` 
+            : 'Data limit removed (unlimited)',
+        };
+      } catch (error) {
+        // If data-limit endpoint fails, try using updateUserConfig as fallback
+        console.error(`[setDataLimit] Failed to update data limit via /data-limit endpoint:`, error.message);
+        
+        // Fallback: use updateUserConfig method which handles the API correctly
+        try {
+          console.log(`[setDataLimit] Trying fallback method with updateUserConfig`);
+          await this.updateUserConfig(actualKeyId, { dataLimit: limitBytes });
+          return {
+            success: true,
+            message: limitBytes === 0 
+              ? 'Data limit set to 0 bytes (blocked)'
+              : limitBytes > 0 
+              ? `Data limit set to ${limitBytes} bytes` 
+              : 'Data limit removed (unlimited)',
+          };
+        } catch (fallbackError) {
+          console.error(`[setDataLimit] Fallback method also failed:`, fallbackError.message);
+          throw error; // Throw original error
+        }
+      }
     } catch (error) {
+      console.error(`[setDataLimit] Error details:`, error.message);
       throw new Error(`Failed to set data limit: ${error.message}`);
+    }
+  }
+
+  async getAccessKeys() {
+    try {
+      const accessKeysResponse = await this.makeRequest('GET', 'access-keys');
+      return accessKeysResponse.accessKeys;
+    } catch (error) {
+      throw new Error(`Failed to get access keys: ${error.message}`);
     }
   }
 }

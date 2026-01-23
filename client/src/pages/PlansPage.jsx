@@ -100,7 +100,8 @@ const PlansPage = () => {
               <th>Data Limit</th>
               <th>Price</th>
               <th>Billing Cycle</th>
-              <th>Active Devices</th>
+              <th>Expiry Months</th>
+              {/* <th>Active Devices</th> */}
               <th>Status</th>
               <th>Actions</th>
             </tr>
@@ -132,14 +133,15 @@ const PlansPage = () => {
                     </span>
                   </td>
                   <td>{plan.billingCycle || 'N/A'}</td>
+                  <td>{plan.expiryMonths || 'N/A'}</td>
                   <td>{plan.stats?.activeDevices || 0}</td>
-                  <td>
+                  {/* <td>
                     <span
                       className={`status-badge status-${plan.isActive ? 'active' : 'inactive'}`}
                     >
                       {plan.isActive ? 'Active' : 'Inactive'}
                     </span>
-                  </td>
+                  </td> */}
                   <td>
                     <div className="action-buttons">
                       <button
