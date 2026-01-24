@@ -1,6 +1,31 @@
-import React from 'react';
+import React, { useState } from 'react';
 
 const QRCodeViewer = ({ device, qrCode, config, onClose, onDownload }) => {
+  const [clipboardMessage, setClipboardMessage] = useState('');
+
+  const handleCopyToClipboard = async () => {
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(config);
+        setClipboardMessage('Configuration copied to clipboard!');
+        setTimeout(() => setClipboardMessage(''), 3000);
+      } else {
+        // Fallback for older browsers or non-HTTPS environments
+        const textArea = document.createElement('textarea');
+        textArea.value = config;
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand('copy');
+        document.body.removeChild(textArea);
+        setClipboardMessage('Configuration copied to clipboard!');
+        setTimeout(() => setClipboardMessage(''), 3000);
+      }
+    } catch (err) {
+      setClipboardMessage('Failed to copy. Please try downloading instead.');
+      setTimeout(() => setClipboardMessage(''), 3000);
+    }
+  };
+
   return (
     <div className="modal-overlay">
       <div className="modal-content qr-modal">
@@ -31,13 +56,13 @@ const QRCodeViewer = ({ device, qrCode, config, onClose, onDownload }) => {
               </button>
               <button
                 className="btn-secondary"
-                onClick={() => {
-                  navigator.clipboard.writeText(config);
-                  alert('Configuration copied to clipboard!');
-                }}
+                onClick={handleCopyToClipboard}
               >
                 Copy to Clipboard
               </button>
+              {clipboardMessage && (
+                <p className="clipboard-message">{clipboardMessage}</p>
+              )}
             </div>
           </div>
         </div>
