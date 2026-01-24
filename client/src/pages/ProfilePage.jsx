@@ -155,17 +155,18 @@ const ProfilePage = () => {
           </div>
         </div>
 
-        <div className="profile-card">
-          <h2>Edit Profile</h2>
-          <form onSubmit={handleUpdateProfile}>
-            <div className="form-group">
-              <label htmlFor="name">Name</label>
-              <input
-                type="text"
-                id="name"
-                name="name"
-                value={formData.name}
-                onChange={handleProfileChange}
+        {(user?.role?.toLowerCase() === 'admin') && (
+          <div className="profile-card">
+            <h2>Edit Profile</h2>
+            <form onSubmit={handleUpdateProfile}>
+              <div className="form-group">
+                <label htmlFor="name">Name</label>
+                <input
+                  type="text"
+                  id="name"
+                  name="name"
+                  value={formData.name}
+                  onChange={handleProfileChange}
               />
             </div>
 
@@ -184,9 +185,11 @@ const ProfilePage = () => {
               {loading ? 'Saving...' : 'Save Changes'}
             </button>
           </form>
-        </div>
+          </div>
+        )}
 
-        <div className="profile-card">
+        {user?.role?.toLowerCase() === 'admin' && (
+          <div className="profile-card">
           <h2>Change Password</h2>
           <form onSubmit={handleChangePassword}>
             <div className="form-group">
@@ -229,7 +232,8 @@ const ProfilePage = () => {
               {loading ? 'Changing...' : 'Change Password'}
             </button>
           </form>
-        </div>
+          </div>
+        )}
       </div>
 
       <div className="profile-actions">

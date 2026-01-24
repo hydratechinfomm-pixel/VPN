@@ -1,10 +1,10 @@
 import React from 'react';
 
-const ROLE_LABELS = { admin: 'Admin', moderator: 'Staff', user: 'User' };
+const ROLE_LABELS = { admin: 'Admin', staff: 'Staff', user: 'User' };
 
 const UserList = ({ users, loading, currentUserRole, onUpdateRole, onToggleStatus, onManageServers }) => {
   const roleLower = currentUserRole?.toLowerCase();
-  const isStaff = roleLower === 'moderator';
+  const isStaff = roleLower === 'staff';
 
   const displayName = (u) =>
     [u.firstName, u.lastName].filter(Boolean).join(' ').trim() || u.username || u.email || '—';
@@ -55,7 +55,7 @@ const UserList = ({ users, loading, currentUserRole, onUpdateRole, onToggleStatu
                       disabled={!canEditRole}
                     >
                       <option value="user">{ROLE_LABELS.user}</option>
-                      <option value="moderator">{ROLE_LABELS.moderator}</option>
+                      <option value="staff">{ROLE_LABELS.staff}</option>
                       {(!isStaff || isTargetAdmin) && (
                         <option value="admin">{ROLE_LABELS.admin}</option>
                       )}
@@ -67,7 +67,7 @@ const UserList = ({ users, loading, currentUserRole, onUpdateRole, onToggleStatu
                     </span>
                   </td>
                   <td>
-                    {user.role?.toLowerCase() === 'moderator' && (
+                    {user.role?.toLowerCase() === 'staff' && (
                       <button
                         className="btn-small btn-info"
                         onClick={() => onManageServers && onManageServers(user)}

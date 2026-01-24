@@ -42,7 +42,7 @@ const PanelUserForm = ({ onSubmit, onCancel }) => {
   const getFormTitle = () => {
     switch (formData.role) {
       case 'admin': return 'Create Admin User';
-      case 'moderator': return 'Create Staff User';
+      case 'staff': return 'Create Staff User';
       case 'user': return 'Create User';
       default: return 'Create User';
     }
@@ -124,7 +124,7 @@ const PanelUserForm = ({ onSubmit, onCancel }) => {
             <label htmlFor="role">Role *</label>
             <select id="role" name="role" value={formData.role} onChange={handleChange} required>
               <option value="user">User (view only, own devices)</option>
-              <option value="moderator">Staff (all except VPN server operations)</option>
+              <option value="staff">Staff (all except VPN server operations)</option>
               <option value="admin">Admin (full control)</option>
             </select>
           </div>

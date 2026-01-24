@@ -34,30 +34,40 @@ const DeviceForm = ({ deviceData, servers, plans, users = [], user, onSubmit, on
 
   // Filter servers based on user role (Staff can only see assigned servers)
   const filteredServers = servers.filter(server => {
-    if (!user) return true; // No user info, show all servers
-    if (user.role === 'admin') return true; // Admin sees all servers
-    if (user.role === 'moderator' && user.allowedServers) {
-      // Staff only sees assigned servers
-      return user.allowedServers.includes(server._id);
+    if (!user) return true;
+    if (user.role === 'admin') return true;
+    if (user.role === 'staff') {
+      // Staff can only see servers assigned to them
+      if (!user.allowedServers || user.allowedServers.length === 0) {
+        return false; // No servers assigned
+      }
+      // Compare server IDs (handle both string and ObjectId)
+      return user.allowedServers.some(allowedServerId => {
+        const allowedId = allowedServerId._id || allowedServerId;
+        return String(allowedId) === String(server._id);
+      });
     }
-    return true; // Regular users or other cases see all servers
+    return true;
   });
 
-  // Auto-calculate expiry date from plan when plan is selected and expiresAt is empty
+  // Auto-calculate expiry date from plan when plan is selected
   useEffect(() => {
-    if (formData.planId && !formData.expiresAt && !deviceData) {
+    if (formData.planId && !deviceData) {
       const selectedPlan = plans.find(p => p._id === formData.planId);
       if (selectedPlan && selectedPlan.expiryMonths) {
         const expiryDate = new Date();
         expiryDate.setMonth(expiryDate.getMonth() + selectedPlan.expiryMonths);
         const expiryDateString = expiryDate.toISOString().split('T')[0];
-        setFormData((prev) => ({
-          ...prev,
-          expiresAt: expiryDateString,
-        }));
+        // Always update expiry date for staff, or if admin hasn't manually set it
+        if (user?.role === 'staff' || !formData.expiresAt) {
+          setFormData((prev) => ({
+            ...prev,
+            expiresAt: expiryDateString,
+          }));
+        }
       }
     }
-  }, [formData.planId, formData.expiresAt, plans, deviceData]);
+  }, [formData.planId, plans, deviceData, user?.role]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
@@ -102,6 +112,25 @@ const DeviceForm = ({ deviceData, servers, plans, users = [], user, onSubmit, on
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+
+    // Validate plan is selected (mandatory)
+    if (!formData.planId) {
+      setError('Plan is required');
+      return;
+    }
+
+    // Validate staff can only use assigned servers
+    if (user?.role === 'staff') {
+      const selectedServer = servers.find(s => s._id === formData.serverId);
+      const isAssignedServer = user.allowedServers?.some(allowedServerId => {
+        const allowedId = allowedServerId._id || allowedServerId;
+        return String(allowedId) === String(selectedServer?._id);
+      });
+      if (!isAssignedServer) {
+        setError('You can only create devices on servers assigned to you');
+        return;
+      }
+    }
 
     // Check for Enterprise + Unlimited warning (only for new devices)
     if (!deviceData && isEnterpriseUnlimited()) {
@@ -257,25 +286,27 @@ const DeviceForm = ({ deviceData, servers, plans, users = [], user, onSubmit, on
 
           <div className="form-row">
             <div className="form-group">
-              <label htmlFor="planId">Plan (Optional)</label>
+              <label htmlFor="planId">Plan * (Required)</label>
               <select
                 id="planId"
                 name="planId"
                 value={formData.planId}
                 onChange={handleChange}
+                required
               >
-                <option value="">No Plan</option>
+                <option value="">Select a Plan</option>
                 {plans.map((plan) => (
                   <option key={plan._id} value={plan._id}>
                     {plan.name} {plan.dataLimit?.isUnlimited ? '(Unlimited)' : plan.dataLimit?.bytes ? `(${(plan.dataLimit.bytes / (1024 * 1024 * 1024)).toFixed(2)} GB)` : '(No limit)'}
                   </option>
                 ))}
               </select>
-              <small>Plan provides default data limit for this device</small>
+              <small>Plan provides default data limit and expiry date for this device</small>
             </div>
 
-            <div className="form-group">
-              <label htmlFor="dataLimit">Device Data Limit Override</label>
+            {user?.role === 'admin' && (
+              <div className="form-group">
+              <label htmlFor="dataLimit">Device Data Limit Override (Admin Only)</label>
               <div style={{ display: 'flex', gap: '8px' }}>
                 <input
                   type="number"
@@ -299,20 +330,26 @@ const DeviceForm = ({ deviceData, servers, plans, users = [], user, onSubmit, on
                 </select>
               </div>
               <small>Optional: Override plan limit for this device only. Leave empty to use plan limit.</small>
+                </div>
+            )}
             </div>
-          </div>
-          <div className="form-row">
-            <div className="form-group">
-              <label htmlFor="expiresAt">Expiration Date</label>
-              <input
-                type="date"
-                id="expiresAt"
-                name="expiresAt"
-                value={formData.expiresAt}
-                onChange={handleChange}
-              />
+            <div className="form-row">
+              <div className="form-group">
+                <label htmlFor="expiresAt">
+                  Expiration Date {user?.role === 'admin' ? '(Admin Can Override)' : '(Based on Plan)'}
+                </label>
+                <input
+                  type="date"
+                  id="expiresAt"
+                  name="expiresAt"
+                  value={formData.expiresAt}
+                  onChange={handleChange}
+                  disabled={user?.role !== 'admin'}
+                  style={user?.role !== 'admin' ? { backgroundColor: '#f3f4f6', cursor: 'not-allowed' } : {}}
+                />
+                <small>{user?.role === 'admin' ? 'Admin can override plan expiry date' : 'Automatically set based on selected plan'}</small>
+              </div>
             </div>
-          </div>
 
           <div className="form-actions">
             <button type="button" className="btn-secondary" onClick={onCancel} disabled={loading}>

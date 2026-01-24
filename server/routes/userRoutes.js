@@ -18,7 +18,7 @@ router.post(
     body('password').isLength({ min: 6 }),
     body('firstName').optional().trim(),
     body('lastName').optional().trim(),
-    body('role').isIn(['admin', 'moderator', 'user']),
+    body('role').isIn(['admin', 'staff', 'user']),
     body('phone').optional().trim(),
     body('nickname').optional().trim(),
   ],
@@ -48,7 +48,7 @@ router.get('/:userId', userController.getUser);
 router.put(
   '/:userId',
   [
-    body('role').optional().isIn(['admin', 'moderator', 'user']),
+    body('role').optional().isIn(['admin', 'staff', 'user']),
     body('plan').optional().isIn(['FREE', 'PREMIUM', 'ENTERPRISE']),
     body('isActive').optional().isBoolean(),
     body('allowedServers').optional().isArray(),

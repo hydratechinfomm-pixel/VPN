@@ -17,7 +17,7 @@ module.exports = {
   // User roles
   ROLES: {
     ADMIN: 'admin',
-    MODERATOR: 'moderator',
+    staff: 'staff',
     USER: 'user',
   },
 

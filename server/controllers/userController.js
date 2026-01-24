@@ -4,7 +4,7 @@ const { logActivity } = require('../middleware/auth');
 const constants = require('../config/constants');
 
 /**
- * Create user (admin only) - role can be admin, moderator, or user
+ * Create user (admin only) - role can be admin, staff, or user
  * For 'user' role, phone and nickname are required
  */
 exports.createPanelUser = async (req, res) => {
@@ -29,7 +29,7 @@ exports.createPanelUser = async (req, res) => {
     // Determine valid role
     let userRole = constants.ROLES.USER;
     if (role === 'admin') userRole = constants.ROLES.ADMIN;
-    else if (role === 'moderator') userRole = constants.ROLES.MODERATOR;
+    else if (role === 'staff') userRole = constants.ROLES.staff;
     else if (role === 'user') userRole = constants.ROLES.USER;
 
     const userData = {
@@ -121,10 +121,10 @@ exports.updateUser = async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    // Staff (moderator) cannot update admin users or set role to admin
+    // Staff (staff) cannot update admin users or set role to admin
     const reqRole = req.user?.role?.toLowerCase();
     const targetRole = user.role?.toLowerCase();
-    if (req.user && reqRole === constants.ROLES.MODERATOR) {
+    if (req.user && reqRole === constants.ROLES.staff) {
       if (targetRole === constants.ROLES.ADMIN) {
         return res.status(403).json({ error: 'Staff cannot modify admin users' });
       }
@@ -170,10 +170,10 @@ exports.deleteUser = async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
 
-    // Staff (moderator) cannot delete admin users
+    // Staff (staff) cannot delete admin users
     const reqRole = req.user?.role?.toLowerCase();
     const targetRole = user.role?.toLowerCase();
-    if (req.user && reqRole === constants.ROLES.MODERATOR && targetRole === constants.ROLES.ADMIN) {
+    if (req.user && reqRole === constants.ROLES.staff && targetRole === constants.ROLES.ADMIN) {
       return res.status(403).json({ error: 'Staff cannot delete admin users' });
     }
 

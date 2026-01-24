@@ -70,7 +70,7 @@ const DashboardPage = () => {
     <div className="dashboard-page">
       <div className="page-header">
         <h1>Dashboard</h1>
-        <p>Welcome, {user?.name || 'User'}!</p>
+        <p>Welcome, {user?.username || 'User'}!</p>
       </div>
 
       {error && <div className="alert alert-error">{error}</div>}

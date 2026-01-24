@@ -107,8 +107,8 @@ const DeviceList = ({ devices, onEdit, onDelete, onDownloadConfig }) => {
     }
   };
 
-  // Check if user is admin or moderator
-  const isAdminOrModerator = user && (user.role === 'admin' || user.role === 'moderator');
+  // Check if user is admin
+  const isAdmin = user && (user.role == 'admin');
 
   if (devices.length === 0) {
     return <div className="empty-state">No devices found</div>;
@@ -324,7 +324,7 @@ const DeviceList = ({ devices, onEdit, onDelete, onDownloadConfig }) => {
                       >
                         📜
                       </button>
-                      {isAdminOrModerator && (
+                      {isAdmin && (
                         <>
                           <button
                             className="btn-icon"

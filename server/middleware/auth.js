@@ -44,7 +44,7 @@ exports.authorizeAdmin = async (req, res, next) => {
 };
 
 /**
- * Verify user is panel admin or staff (admin or moderator)
+ * Verify user is panel admin or staff (admin or staff)
  * Staff can do all except VPN server write ops and creating panel users
  */
 exports.authorizePanelAdmin = async (req, res, next) => {
@@ -53,7 +53,7 @@ exports.authorizePanelAdmin = async (req, res, next) => {
     const user = await User.findById(req.userId);
 
     const role = user.role?.toLowerCase();
-    if (!user || (role !== constants.ROLES.ADMIN && role !== constants.ROLES.MODERATOR)) {
+    if (!user || (role !== constants.ROLES.ADMIN && role !== constants.ROLES.staff)) {
       await logActivity(req.userId, 'PANEL_ADMIN_ACCESS_DENIED', 'USER', null, false, 'Panel admin or staff access required');
       return res.status(403).json({ error: 'Panel admin or staff access required' });
     }

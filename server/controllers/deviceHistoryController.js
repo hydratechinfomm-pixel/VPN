@@ -20,10 +20,10 @@ exports.getDeviceHistory = async (req, res) => {
     // Check authorization
     const user = await User.findById(userId);
     const isAdmin = user.role?.toLowerCase() === 'admin';
-    const isModerator = user.role?.toLowerCase() === 'moderator';
+    const isstaff = user.role?.toLowerCase() === 'staff';
     const isOwner = device.user && device.user.toString() === userId;
 
-    if (!isAdmin && !isModerator && !isOwner) {
+    if (!isAdmin && !isstaff && !isOwner) {
       return res.status(403).json({ error: 'Access denied' });
     }
 
@@ -56,10 +56,10 @@ exports.getUserDevicesHistory = async (req, res) => {
     // Check authorization
     const requester = await User.findById(requesterId);
     const isAdmin = requester.role?.toLowerCase() === 'admin';
-    const isModerator = requester.role?.toLowerCase() === 'moderator';
+    const isstaff = requester.role?.toLowerCase() === 'staff';
     const isSelf = targetUserId === requesterId;
 
-    if (!isAdmin && !isModerator && !isSelf) {
+    if (!isAdmin && !isstaff && !isSelf) {
       return res.status(403).json({ error: 'Access denied' });
     }
 
@@ -87,7 +87,7 @@ exports.getUserDevicesHistory = async (req, res) => {
 };
 
 /**
- * Get all device history with filters (admin/moderator only)
+ * Get all device history with filters (admin/staff only)
  */
 exports.getAllHistory = async (req, res) => {
   try {
@@ -103,10 +103,10 @@ exports.getAllHistory = async (req, res) => {
     }
     
     const isAdmin = requester.role?.toLowerCase() === 'admin';
-    const isModerator = requester.role?.toLowerCase() === 'moderator';
+    const isstaff = requester.role?.toLowerCase() === 'staff';
 
-    if (!isAdmin && !isModerator) {
-      return res.status(403).json({ error: 'Admin or moderator access required' });
+    if (!isAdmin && !isstaff) {
+      return res.status(403).json({ error: 'Admin or staff access required' });
     }
 
     // Build query

@@ -7,21 +7,21 @@ const { authenticateToken, authorizePanelAdmin } = require('../middleware/auth')
 // All routes require authentication
 router.use(authenticateToken);
 
-// Get all history with filters (admin/moderator only) - must be before /:deviceId routes
+// Get all history with filters (admin/staff only) - must be before /:deviceId routes
 router.get('/history', authorizePanelAdmin, deviceHistoryController.getAllHistory);
 
 // Device CRUD
 router.post('/', deviceController.createDevice);
 router.get('/', deviceController.getDevices);
 router.get('/:deviceId', deviceController.getDevice);
-router.put('/:deviceId', deviceController.updateDevice);
-router.delete('/:deviceId', deviceController.deleteDevice);
+router.put('/:deviceId', authorizePanelAdmin, deviceController.updateDevice);
+router.delete('/:deviceId', authorizePanelAdmin, deviceController.deleteDevice);
 
 // Device actions
-router.patch('/:deviceId/status', deviceController.toggleDeviceStatus);
+router.patch('/:deviceId/status', authorizePanelAdmin, deviceController.toggleDeviceStatus);
 router.get('/:deviceId/config', deviceController.getDeviceConfig);
 router.get('/:deviceId/qr', deviceController.getDeviceQR);
-router.post('/:deviceId/disconnect', deviceController.disconnectDevice);
+router.post('/:deviceId/disconnect', authorizePanelAdmin, deviceController.disconnectDevice);
 
 // Device history (specific device)
 router.get('/:deviceId/history', deviceHistoryController.getDeviceHistory);

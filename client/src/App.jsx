@@ -34,7 +34,7 @@ const ProtectedRoute = ({ children, requiredRole, requiredPanelAdmin }) => {
 
   if (requiredPanelAdmin) {
     const userRole = user?.role?.toLowerCase();
-    if (userRole !== 'admin' && userRole !== 'moderator') {
+    if (userRole !== 'admin' && userRole !== 'staff') {
       return <Navigate to="/dashboard" />;
     }
   } else if (requiredRole) {

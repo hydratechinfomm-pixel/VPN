@@ -40,11 +40,11 @@ exports.createDevice = async (req, res) => {
     // Check if requester can create devices on this server
     const requester = await User.findById(requesterId);
     const isAdmin = requester.role?.toLowerCase() === 'admin';
-    const isModerator = requester.role?.toLowerCase() === 'moderator';
+    const isstaff = requester.role?.toLowerCase() === 'staff';
 
     // Server access control:
     // - Admin: can create on any server
-    // - Staff (moderator) + regular users: can only create on servers assigned in allowedServers
+    // - Staff (staff) + regular users: can only create on servers assigned in allowedServers
     const hasServerAccess = Array.isArray(requester.allowedServers)
       && requester.allowedServers.some((id) => String(id) === String(serverId));
 
@@ -53,18 +53,18 @@ exports.createDevice = async (req, res) => {
     }
 
     // Determine which user to assign the device to
-    // If assignedUserId is provided (and requester is admin/moderator), use it
+    // If assignedUserId is provided (and requester is admin/staff), use it
     // Otherwise assign to the requester
     let deviceOwnerId = requesterId;
-    if (assignedUserId && (isAdmin || isModerator)) {
+    if (assignedUserId && (isAdmin || isstaff)) {
       // Verify the assigned user exists
       const assignedUser = await User.findById(assignedUserId);
       if (!assignedUser) {
         return res.status(404).json({ error: 'Assigned user not found' });
       }
       deviceOwnerId = assignedUserId;
-    } else if (assignedUserId && !isAdmin && !isModerator) {
-      return res.status(403).json({ error: 'Only admins and moderators can assign devices to other users' });
+    } else if (assignedUserId && !isAdmin && !isstaff) {
+      return res.status(403).json({ error: 'Only admins and staffs can assign devices to other users' });
     }
 
     const vpnService = getVpnService(server);
@@ -360,13 +360,13 @@ exports.getDevices = async (req, res) => {
 
     // Role-based filtering
     const isAdmin = user.role?.toLowerCase() === 'admin';
-    const isModerator = user.role?.toLowerCase() === 'moderator';
+    const isstaff = user.role?.toLowerCase() === 'staff';
     
-    if (!isAdmin && !isModerator) {
+    if (!isAdmin && !isstaff) {
       // Regular users only see their assigned devices
       query.user = userId;
     }
-    // Admin and moderators see all devices (no user filter)
+    // Admin and staffs see all devices (no user filter)
 
     const devices = await Device.find(query)
       .populate('server', 'name host region vpnType')
@@ -505,8 +505,8 @@ exports.updateDevice = async (req, res) => {
     // Check authorization
     const user = await User.findById(userId);
     const isAdmin = user.role?.toLowerCase() === 'admin';
-    const isModerator = user.role?.toLowerCase() === 'moderator';
-    if (device.user && device.user.toString() !== userId && !isAdmin && !isModerator) {
+    const isstaff = user.role?.toLowerCase() === 'staff';
+    if (device.user && device.user.toString() !== userId && !isAdmin && !isstaff) {
       return res.status(403).json({ error: 'Access denied' });
     }
 

@@ -18,7 +18,7 @@ const Sidebar = () => {
           📊 Dashboard
         </Link>
 
-        {(user?.role?.toLowerCase() === 'admin' || user?.role?.toLowerCase() === 'moderator') && (
+        {(user?.role?.toLowerCase() === 'admin') && (
           <Link
             to="/servers"
             className={`nav-item ${isActive('/servers') ? 'active' : ''}`}
@@ -34,14 +34,8 @@ const Sidebar = () => {
           📱 Devices
         </Link>
 
-        {(user?.role?.toLowerCase() === 'admin' || user?.role?.toLowerCase() === 'moderator') && (
+        {(user?.role?.toLowerCase() === 'admin') && (
           <>
-            <Link
-              to="/history"
-              className={`nav-item ${isActive('/history') ? 'active' : ''}`}
-            >
-              📜 History
-            </Link>
             <Link
               to="/plans"
               className={`nav-item ${isActive('/plans') ? 'active' : ''}`}
@@ -54,14 +48,22 @@ const Sidebar = () => {
             >
               👥 Users
             </Link>
-            <Link
-              to="/sales-report"
-              className={`nav-item ${isActive('/sales-report') ? 'active' : ''}`}
-            >
-              💰 Sales Report
-            </Link>
+            
           </>
         )}
+        <Link
+            to="/sales-report"
+            className={`nav-item ${isActive('/sales-report') ? 'active' : ''}`}
+          >
+            💰 Sales Report
+        </Link>
+
+        <Link
+            to="/history"
+            className={`nav-item ${isActive('/history') ? 'active' : ''}`}
+          >
+            📜 History
+        </Link>
 
         <Link
           to="/profile"

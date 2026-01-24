@@ -85,7 +85,7 @@ Successfully upgraded the VPN control panel with enhanced Outline server feature
 - ✅ Server selection shows VPN type icons (🔷 WireGuard / 🔶 Outline)
 
 **Authorization:**
-- Only admins and moderators can assign devices to other users
+- Only admins and staffs can assign devices to other users
 - Regular users can only create devices for themselves
 
 ---
@@ -108,7 +108,7 @@ Successfully upgraded the VPN control panel with enhanced Outline server feature
 - View all devices
 - View all history
 
-**Staff (Moderator):**
+**Staff (staff):**
 - View all servers (read-only)
 - View server metrics and reports
 - Create/edit/delete devices
@@ -297,7 +297,7 @@ Since Outline API doesn't have a native "pause" feature, the system uses a worka
 5. **Advanced Filters:** Filter devices by usage percentage, expiration date, etc.
 6. **Usage Graphs:** Visual charts for usage trends over time
 7. **Device Groups:** Organize devices into groups/categories
-8. **Custom Roles:** Define custom roles beyond admin/moderator/user
+8. **Custom Roles:** Define custom roles beyond admin/staff/user
 
 ---
 

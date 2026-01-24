@@ -118,13 +118,13 @@ const DevicesPage = () => {
     return <div className="loading-screen">Loading devices...</div>;
   }
 
-  const isAdminOrModerator = user && (user.role === 'admin' || user.role === 'moderator');
+  const isAdminOrstaff = user && (user.role === 'admin' || user.role === 'staff');
 
   return (
     <div className="accesskeys-page">
       <div className="page-header">
         <h1>Devices Management</h1>
-        {isAdminOrModerator && (
+        {isAdminOrstaff && (
           <button className="btn-primary" onClick={handleAddDevice}>
             + Add Device
           </button>
