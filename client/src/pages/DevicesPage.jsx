@@ -37,15 +37,44 @@ const DevicesPage = () => {
       const usersList = Array.isArray(usersResponse) ? usersResponse : usersResponse?.users || [];
       
       // Filter devices by server type if selected
-      let filteredDevices = devicesList;
+      let filteredDevices = devicesList.filter(device => {
+        if (user.role === 'staff') {
+          // Staff can only see servers assigned to them
+          if (!user.allowedServers || user.allowedServers.length === 0) {
+            return false; // No servers assigned
+          }
+          // Compare server IDs (handle both string and ObjectId)
+          return user.allowedServers.some(allowedServerId => {
+            const allowedId = allowedServerId._id || allowedServerId;
+            return String(allowedId) === String(device.server?._id);
+          });
+        }
+        return true;
+      });
       if (selectedServerType) {
         filteredDevices = devicesList.filter(
           (device) => device.server?.vpnType === selectedServerType
         );
       }
+
+      // Filter servers based on user role (Staff can only see assigned servers)
+      const filteredServers = serversList.filter(server => {
+        if (user.role === 'staff') {
+          // Staff can only see servers assigned to them
+          if (!user.allowedServers || user.allowedServers.length === 0) {
+            return false; // No servers assigned
+          }
+          // Compare server IDs (handle both string and ObjectId)
+          return user.allowedServers.some(allowedServerId => {
+            const allowedId = allowedServerId._id || allowedServerId;
+            return String(allowedId) === String(server._id);
+          });
+        }
+        return true;
+      });
       
       setDevices(filteredDevices);
-      setServers(serversList);
+      setServers(filteredServers);
       setPlans(plansList);
       setUsers(usersList);
     } catch (err) {

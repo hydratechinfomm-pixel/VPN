@@ -1,6 +1,6 @@
 import React from 'react';
 
-const SalesReportFilters = ({ filters, onChange, users, plans }) => {
+const SalesReportFilters = ({ filters, onChange, users, plans, servers }) => {
   const handleChange = (e) => {
     const { name, value } = e.target;
     onChange({
@@ -95,6 +95,23 @@ const SalesReportFilters = ({ filters, onChange, users, plans }) => {
             {plans.map((p) => (
               <option key={p._id} value={p._id}>
                 {p.name}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="form-group">
+          <label htmlFor="server">Server</label>
+          <select
+            id="serverId"
+            name="serverId"
+            value={filters.serverId || ''}
+            onChange={handleChange}
+          >
+            <option value="">All Servers</option>
+            {servers.map((s) => (
+              <option key={s._id} value={s._id}>
+                {s.name}
               </option>
             ))}
           </select>

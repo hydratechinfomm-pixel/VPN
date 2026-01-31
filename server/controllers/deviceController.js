@@ -522,7 +522,8 @@ exports.updateDevice = async (req, res) => {
     // Track plan change
     if (planId !== undefined && planId !== device.plan?.toString()) {
       changes.push({ field: 'plan', oldValue: device.plan, newValue: planId || null });
-      device.plan = planId || null;
+      const changePlan = await Plan.findById(planId);
+      device.plan = changePlan.name || null;
     }
 
     // Track expiration date change

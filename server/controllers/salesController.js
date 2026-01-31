@@ -10,6 +10,7 @@ function buildMatch(query) {
     serverType,
     userId,
     planId,
+    serverId,
   } = query;
 
   const match = {};
@@ -33,6 +34,10 @@ function buildMatch(query) {
 
   if (userId) {
     match.user = userId;
+  }
+
+  if (serverId) {
+    match.server = serverId;
   }
 
   if (planId) {
@@ -70,6 +75,16 @@ exports.getSalesReport = async (req, res) => {
             {
               $group: {
                 _id: '$planName',
+                revenue: { $sum: '$planPrice' },
+                count: { $sum: 1 },
+              },
+            },
+            { $sort: { revenue: -1 } },
+          ],
+          byServer: [
+            {
+              $group: {
+                _id: '$serverName',
                 revenue: { $sum: '$planPrice' },
                 count: { $sum: 1 },
               },
@@ -115,6 +130,7 @@ exports.getSalesReport = async (req, res) => {
       deviceCount: totals.deviceCount || 0,
       byPlan: (result && result.byPlan) || [],
       byServerType: (result && result.byServerType) || [],
+      byServer: (result && result.byServer) || [],
       byUser: (result && result.byUser) || [],
       transactions,
     });

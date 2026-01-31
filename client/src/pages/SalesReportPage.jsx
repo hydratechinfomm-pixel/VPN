@@ -1,7 +1,8 @@
-import React, { useEffect, useState } from 'react';
-import { salesAPI, usersAPI, plansAPI } from '../api';
+import React, { useEffect, useState, useContext } from 'react';
+import { salesAPI, usersAPI, plansAPI, serversAPI } from '../api';
 import SalesReportFilters from '../components/SalesReportFilters';
 import SalesReportChart from '../components/SalesReportChart';
+import { AuthContext } from '../context/AuthContext';
 
 const SalesReportPage = () => {
   const [filters, setFilters] = useState({
@@ -10,12 +11,15 @@ const SalesReportPage = () => {
     serverType: '',
     userId: '',
     planId: '',
+    serverId: '',
     period: 'daily',
   });
+  const { user } = useContext(AuthContext);
   const [report, setReport] = useState(null);
   const [periodData, setPeriodData] = useState(null);
   const [users, setUsers] = useState([]);
   const [plans, setPlans] = useState([]);
+  const [servers, setServers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState('details'); // summary | breakdown | details
@@ -24,12 +28,14 @@ const SalesReportPage = () => {
     const init = async () => {
       try {
         setLoading(true);
-        const [usersRes, plansRes] = await Promise.all([
+        const [usersRes, plansRes, serversRes] = await Promise.all([
           usersAPI.getAll(),
           plansAPI.getAll(true),
+          serversAPI.getAll(),
         ]);
         setUsers(usersRes?.users || []);
         setPlans(plansRes?.plans || []);
+        setServers(serversRes?.servers || []);
 
         await fetchReport(); // initial load with default filters
       } catch (err) {
@@ -51,7 +57,19 @@ const SalesReportPage = () => {
         salesAPI.getReport(filters),
         salesAPI.getByPeriod(filters.period || 'daily', filters),
       ]);
-      setReport(reportRes);
+
+      // Filter devices by server type if selected
+      let filteredReportRes = reportRes;
+      if (user.role === 'staff') {
+        console.log('Filtering report for staff user:', user?._id);
+        filteredReportRes = {
+          transactions: (reportRes.transactions || []).filter((tx) => {
+            return tx.createdByName == user.username;
+          })
+        };
+      }
+
+      setReport(filteredReportRes);
       setPeriodData(periodRes);
     } catch (err) {
       setError(err?.error || 'Failed to load sales report');
@@ -73,6 +91,7 @@ const SalesReportPage = () => {
         onChange={setFilters}
         users={users}
         plans={plans}
+        servers={servers}
       />
 
       <div className="form-actions" style={{ marginBottom: '16px' }}>
@@ -95,20 +114,24 @@ const SalesReportPage = () => {
         >
           Details
         </button>
-        <button
-          type="button"
-          className={`tab ${activeTab === 'breakdown' ? 'active' : ''}`}
-          onClick={() => setActiveTab('breakdown')}
-        >
-          Breakdown
-        </button>
-        <button
-          type="button"
-          className={`tab ${activeTab === 'summary' ? 'active' : ''}`}
-          onClick={() => setActiveTab('summary')}
-        >
-          Summary
-        </button>
+        {(user.role === 'admin') && (
+          <>
+          <button
+            type="button"
+            className={`tab ${activeTab === 'breakdown' ? 'active' : ''}`}
+            onClick={() => setActiveTab('breakdown')}
+          >
+            Breakdown
+          </button>
+          <button
+            type="button"
+            className={`tab ${activeTab === 'summary' ? 'active' : ''}`}
+            onClick={() => setActiveTab('summary')}
+          >
+            Summary
+          </button>
+          </>
+       )}
       </div>
 
       {report && activeTab === 'summary' && (
