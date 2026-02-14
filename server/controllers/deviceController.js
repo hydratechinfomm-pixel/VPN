@@ -5,6 +5,7 @@ const User = require('../models/User');
 const DeviceHistory = require('../models/DeviceHistory');
 const SalesTransaction = require('../models/SalesTransaction');
 const Plan = require('../models/Plan');
+const mongoose = require('mongoose');
 const WireGuardService = require('../services/WireGuardService');
 const OutlineService = require('../services/OutlineService');
 const ConfigGenerator = require('../utils/ConfigGenerator');
@@ -519,11 +520,33 @@ exports.updateDevice = async (req, res) => {
       device.name = name;
     }
 
-    // Track plan change
-    if (planId !== undefined && planId !== device.plan?.toString()) {
-      changes.push({ field: 'plan', oldValue: device.plan, newValue: planId || null });
-      const changePlan = await Plan.findById(planId);
-      device.plan = changePlan.name || null;
+    // Track plan change (allow null and accept plan name or _id)
+    if (planId !== undefined) {
+      // Normalize client inputs that represent "no plan"
+      const normalized = (planId === '' || planId === 'null') ? null : planId;
+      const currentPlanIdStr = device.plan ? device.plan.toString() : null;
+
+      // Resolve incoming plan value to a Plan _id (or null)
+      let resolvedPlanId = null;
+      if (normalized) {
+        if (mongoose.Types.ObjectId.isValid(normalized)) {
+          const found = await Plan.findById(normalized);
+          if (!found) return res.status(404).json({ error: 'Plan not found' });
+          resolvedPlanId = found._id;
+        } else {
+          // treat value as plan name
+          const foundByName = await Plan.findOne({ name: normalized });
+          if (!foundByName) return res.status(404).json({ error: 'Plan not found' });
+          resolvedPlanId = foundByName._id;
+        }
+      } else {
+        resolvedPlanId = null;
+      }
+
+      if ((resolvedPlanId && resolvedPlanId.toString()) !== currentPlanIdStr) {
+        changes.push({ field: 'plan', oldValue: device.plan || null, newValue: resolvedPlanId });
+        device.plan = resolvedPlanId;
+      }
     }
 
     // Track expiration date change

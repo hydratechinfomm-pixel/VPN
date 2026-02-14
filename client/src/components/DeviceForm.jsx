@@ -113,8 +113,8 @@ const DeviceForm = ({ deviceData, servers, plans, users = [], user, onSubmit, on
     e.preventDefault();
     setError('');
 
-    // Validate plan is selected (mandatory)
-    if (!formData.planId) {
+    // Validate plan is selected (mandatory only when creating a device)
+    if (!deviceData && !formData.planId) {
       setError('Plan is required');
       return;
     }
@@ -286,13 +286,13 @@ const DeviceForm = ({ deviceData, servers, plans, users = [], user, onSubmit, on
 
           <div className="form-row">
             <div className="form-group">
-              <label htmlFor="planId">Plan * (Required)</label>
+              <label htmlFor="planId">Plan {deviceData ? '(Optional)' : '* (Required)'}</label>
               <select
                 id="planId"
                 name="planId"
                 value={formData.planId}
                 onChange={handleChange}
-                required
+                
               >
                 <option value="">Select a Plan</option>
                 {plans.map((plan) => (
