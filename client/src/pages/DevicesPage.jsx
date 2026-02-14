@@ -3,6 +3,7 @@ import { devicesAPI, serversAPI, plansAPI, usersAPI } from '../api';
 import { AuthContext } from '../context/AuthContext';
 import DeviceForm from '../components/DeviceForm';
 import DeviceList from '../components/DeviceList';
+import DeviceMigrateModal from '../components/DeviceMigrateModal';
 import '../styles/devices.css';
 
 const DevicesPage = () => {
@@ -15,6 +16,8 @@ const DevicesPage = () => {
   const [error, setError] = useState('');
   const [showForm, setShowForm] = useState(false);
   const [editingDevice, setEditingDevice] = useState(null);
+  const [showMigrateModal, setShowMigrateModal] = useState(false);
+  const [migratingDevice, setMigratingDevice] = useState(null);
   const [selectedServerId, setSelectedServerId] = useState('');
   const [selectedServerType, setSelectedServerType] = useState(''); // Add server type filter
 
@@ -93,6 +96,32 @@ const DevicesPage = () => {
   const handleEditDevice = (device) => {
     setEditingDevice(device);
     setShowForm(true);
+  };
+
+  const handleMigrateDevice = (device) => {
+    setMigratingDevice(device);
+    setShowMigrateModal(true);
+  };
+
+  const handleMigrateSuccess = async (migrationResult) => {
+    // Refresh list and close modal
+    setShowMigrateModal(false);
+    setMigratingDevice(null);
+    fetchData();
+
+    // If backend returned an accessUrl, prompt download / show QR
+    if (migrationResult?.accessUrl) {
+      // Try to open QR modal by fetching QR from API (DeviceList handles QR)
+      // As a simple UX, copy the access URL to clipboard and alert user
+      try {
+        await navigator.clipboard.writeText(migrationResult.accessUrl);
+        alert('Migration successful — access URL copied to clipboard. You can download QR or config from the device list.');
+      } catch (err) {
+        alert('Migration successful — new access URL available in device details.');
+      }
+    } else {
+      alert('Migration successful');
+    }
   };
 
   const handleDeleteDevice = async (deviceId) => {
@@ -192,7 +221,17 @@ const DevicesPage = () => {
         onEdit={handleEditDevice}
         onDelete={handleDeleteDevice}
         onDownloadConfig={handleDownloadConfig}
+        onMigrate={handleMigrateDevice}
       />
+
+      {showMigrateModal && migratingDevice && (
+        <DeviceMigrateModal
+          device={migratingDevice}
+          servers={servers}
+          onClose={() => { setShowMigrateModal(false); setMigratingDevice(null); }}
+          onSuccess={handleMigrateSuccess}
+        />
+      )
 
       {showForm && (
         <DeviceForm

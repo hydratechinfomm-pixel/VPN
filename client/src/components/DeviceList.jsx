@@ -5,7 +5,7 @@ import { AuthContext } from '../context/AuthContext';
 import QRCodeViewer from './QRCodeViewer';
 import DeviceHistoryModal from './DeviceHistoryModal';
 
-const DeviceList = ({ devices, onEdit, onDelete, onDownloadConfig }) => {
+const DeviceList = ({ devices, onEdit, onDelete, onDownloadConfig, onMigrate }) => {
   const { user } = useContext(AuthContext);
   const navigate = useNavigate();
   const [selectedDevice, setSelectedDevice] = useState(null);
@@ -333,6 +333,16 @@ const DeviceList = ({ devices, onEdit, onDelete, onDownloadConfig }) => {
                           >
                             ✏️
                           </button>
+                          {device.server?.vpnType === 'outline' && (
+                            <button
+                              className="btn-icon"
+                              onClick={() => onMigrate && onMigrate(device)}
+                              title="Migrate"
+                              style={{ marginLeft: 4 }}
+                            >
+                              🔀
+                            </button>
+                          )
                           {/* Suspend/Resume button for all VPN types */}
                           <button
                             className="btn-icon"

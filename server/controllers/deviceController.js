@@ -630,6 +630,202 @@ exports.updateDevice = async (req, res) => {
 };
 
 /**
+ * Device migration (Outline-only)
+ */
+exports.migrateDevice = async (req, res) => {
+  try {
+    const { deviceId } = req.params;
+    const { targetServerId, importUsage = true } = req.body;
+    const userId = req.userId;
+
+    const device = await Device.findById(deviceId).populate('accessKey');
+    if (!device) return res.status(404).json({ error: 'Device not found' });
+
+    // Only Outline devices supported for now
+    const sourceServer = await VpnServer.findById(device.server).select('+outline.adminAccessKey +outline.ssh.privateKey');
+    if (!sourceServer || sourceServer.vpnType !== 'outline') {
+      return res.status(400).json({ error: 'Only Outline devices can be migrated with this endpoint' });
+    }
+
+    if (!device.accessKey) {
+      return res.status(400).json({ error: 'Device has no associated Outline access key' });
+    }
+
+    if (!targetServerId || targetServerId === String(sourceServer._id)) {
+      return res.status(400).json({ error: 'Invalid target server' });
+    }
+
+    const targetServer = await VpnServer.findById(targetServerId).select('+outline.adminAccessKey +outline.ssh.privateKey');
+    if (!targetServer || targetServer.vpnType !== 'outline' || !targetServer.isActive) {
+      return res.status(400).json({ error: 'Target server not available or not an Outline server' });
+    }
+
+    // Check target health
+    const targetService = new OutlineService(targetServer);
+    const isHealthy = await targetService.checkHealth();
+    if (!isHealthy) return res.status(400).json({ error: 'Target Outline server is not healthy' });
+
+    // read source usage/limit from source Outline server
+    const sourceService = new OutlineService(sourceServer);
+    let usageSnapshot = { bytesSent: 0, bytesReceived: 0, totalBytes: 0 };
+    let remainingBytes = null; // null means unlimited
+    try {
+      const stats = await sourceService.getUserStats(device.accessKey.accessKeyId);
+      const used = stats.bytesUsed || 0;
+      usageSnapshot = { bytesSent: 0, bytesReceived: used, totalBytes: used, lastSync: new Date() };
+
+      // Determine remaining quota from device override -> plan -> accessKey
+      const sourceLimit = device.dataLimit?.bytes || device.plan?.dataLimit?.bytes || (stats.dataLimit?.bytes || null);
+      if (sourceLimit && typeof sourceLimit === 'number') {
+        remainingBytes = Math.max(0, sourceLimit - used);
+      } else {
+        remainingBytes = null; // unlimited
+      }
+    } catch (err) {
+      console.warn('[migrateDevice] Failed to fetch source usage:', err.message);
+      // proceed without usage import if fetch fails
+      usageSnapshot = { bytesSent: 0, bytesReceived: 0, totalBytes: 0, lastSync: new Date() };
+      remainingBytes = device.dataLimit?.bytes || device.plan?.dataLimit?.bytes || null;
+    }
+
+    // Create access key on target server with remainingBytes as limit (if provided)
+    let newKeyData;
+    try {
+      const createBody = { name: device.name || (device.accessKey && device.accessKey.name) };
+      if (importUsage && remainingBytes !== null && typeof remainingBytes === 'number') {
+        createBody.limit = remainingBytes;
+      }
+      newKeyData = await targetService.addUser(createBody);
+    } catch (err) {
+      console.error('[migrateDevice] Failed to create key on target:', err.message);
+      return res.status(500).json({ error: `Failed to create access key on target server: ${err.message}` });
+    }
+
+    // Try to set data limit explicitly (best-effort)
+    try {
+      await targetService.setDataLimit(newKeyData.accessKeyId, importUsage ? remainingBytes : null);
+    } catch (err) {
+      console.warn('[migrateDevice] Failed to set data limit on new key:', err.message);
+    }
+
+    // Persist DB changes: create new AccessKey doc, update device, update servers
+    try {
+      const newAccessKeyDoc = new AccessKey({
+        server: targetServer._id,
+        user: device.user || null,
+        device: device._id,
+        accessKeyId: newKeyData.accessKeyId,
+        accessUrl: newKeyData.accessUrl,
+        name: newKeyData.name || device.name || 'access-key',
+        dataLimit: importUsage && remainingBytes !== null ? { bytes: remainingBytes, isEnabled: true } : { isEnabled: false },
+        status: 'ACTIVE',
+        expiresAt: device.expiresAt || null,
+        usage: usageSnapshot,
+      });
+
+      await newAccessKeyDoc.save();
+
+      // Update device to point to target server & new access key and preserve usage/limits
+      device.server = targetServer._id;
+      device.accessKey = newAccessKeyDoc._id;
+      device.configFile = newKeyData.accessUrl;
+      device.usage = usageSnapshot;
+
+      // If importing quota, set device override to remainingBytes so UI/billing honor it
+      if (importUsage && remainingBytes !== null) {
+        device.dataLimit = { bytes: remainingBytes, isEnabled: true };
+        device.isUnlimited = false;
+      } else if (importUsage && remainingBytes === null) {
+        device.dataLimit = { isEnabled: false };
+        device.isUnlimited = true;
+      }
+
+      await device.save();
+
+      // Update target server devices/stats
+      targetServer.devices.push(device._id);
+      targetServer.stats.totalUsers = (targetServer.stats.totalUsers || 0) + 1;
+      await targetServer.save();
+
+      // Update source server devices/stats: remove device reference
+      const src = await VpnServer.findById(sourceServer._id);
+      if (src) {
+        src.devices = (src.devices || []).filter((id) => String(id) !== String(device._id));
+        src.stats.totalUsers = Math.max(0, (src.stats.totalUsers || 1) - 1);
+        await src.save();
+      }
+
+      // Remove old AccessKey from source Outline server and delete DB doc
+      try {
+        const oldAccessKey = await AccessKey.findOne({ device: device._id, server: sourceServer._id });
+        if (oldAccessKey) {
+          try {
+            await sourceService.removeUser(oldAccessKey.accessKeyId);
+            await AccessKey.findByIdAndDelete(oldAccessKey._id);
+          } catch (err) {
+            console.warn('[migrateDevice] Failed to remove old key from source server:', err.message);
+            // mark disabled so admin can clean up later
+            oldAccessKey.status = 'DISABLED';
+            await oldAccessKey.save();
+            await DeviceHistory.create({
+              device: device._id,
+              user: userId,
+              action: 'MIGRATED',
+              reason: 'manual',
+              metadata: {
+                deviceName: device.name,
+                notes: `Old access key could not be removed from source server: ${err.message}`,
+              },
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('[migrateDevice] Cleanup of old access key failed:', err.message);
+      }
+
+      // Log activity and history
+      await logActivity(userId, 'MIGRATE_DEVICE', 'DEVICE', device._id, true);
+      await DeviceHistory.create({
+        device: device._id,
+        user: userId,
+        action: 'MIGRATED',
+        changes: {
+          field: 'server',
+          oldValue: sourceServer.name,
+          newValue: targetServer.name,
+        },
+        reason: 'manual',
+        metadata: {
+          deviceName: device.name,
+          notes: `Imported usage: ${usageSnapshot.totalBytes} bytes, remaining quota: ${remainingBytes === null ? 'unlimited' : remainingBytes + ' bytes'}`,
+        },
+      });
+
+      // Return updated device and new accessUrl for immediate download/QR
+      const updatedDevice = await Device.findById(device._id)
+        .populate('server', 'name host region vpnType')
+        .populate('accessKey', 'accessKeyId accessUrl name');
+
+      return res.json({ message: 'Device migrated successfully', device: updatedDevice, accessUrl: newKeyData.accessUrl });
+    } catch (err) {
+      console.error('[migrateDevice] Database update failed, attempting rollback:', err.message);
+      // Attempt compensating removal of newly created key on target
+      try {
+        if (newKeyData && newKeyData.accessKeyId) {
+          await targetService.removeUser(newKeyData.accessKeyId);
+        }
+      } catch (cleanupErr) {
+        console.error('[migrateDevice] Rollback cleanup failed:', cleanupErr.message);
+      }
+      return res.status(500).json({ error: 'Failed to complete migration: ' + err.message });
+    }
+  } catch (error) {
+    console.error('Error migrating device:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+/**
  * Delete device - handles both WireGuard and Outline
  */
 exports.deleteDevice = async (req, res) => {

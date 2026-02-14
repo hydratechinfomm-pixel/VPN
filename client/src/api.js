@@ -67,6 +67,7 @@ export const devicesAPI = {
   getConfig: (deviceId) => api.get(`/devices/${deviceId}/config`, { responseType: 'blob' }),
   getQR: (deviceId) => api.get(`/devices/${deviceId}/qr`),
   disconnect: (deviceId) => api.post(`/devices/${deviceId}/disconnect`),
+  migrate: (deviceId, payload) => api.post(`/devices/${deviceId}/migrate`, payload),
   getHistory: (deviceId) => api.get(`/devices/${deviceId}/history`),
 };
 

@@ -30,6 +30,7 @@ const deviceHistorySchema = new mongoose.Schema(
         'DISABLED',
         'NAME_CHANGED',
         'PLAN_CHANGED',
+        'MIGRATED',
       ],
       required: true,
     },

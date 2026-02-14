@@ -15,6 +15,7 @@ router.post('/', deviceController.createDevice);
 router.get('/', deviceController.getDevices);
 router.get('/:deviceId', deviceController.getDevice);
 router.put('/:deviceId', authorizePanelAdmin, deviceController.updateDevice);
+router.post('/:deviceId/migrate', authorizePanelAdmin, deviceController.migrateDevice); // Outline-only device migration (admin only)
 router.delete('/:deviceId', authorizePanelAdmin, deviceController.deleteDevice);
 
 // Device actions
