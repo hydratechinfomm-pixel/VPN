@@ -342,7 +342,7 @@ const DeviceList = ({ devices, onEdit, onDelete, onDownloadConfig, onMigrate }) 
                             >
                               🔀
                             </button>
-                          )
+                          )}
                           {/* Suspend/Resume button for all VPN types */}
                           <button
                             className="btn-icon"

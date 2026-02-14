@@ -119,8 +119,8 @@ const DeviceForm = ({ deviceData, servers, plans, users = [], user, onSubmit, on
       return;
     }
 
-    // Validate staff can only use assigned servers
-    if (user?.role === 'staff') {
+    // Validate staff can only use assigned servers (only on create)
+    if (!deviceData && user?.role === 'staff') {
       const selectedServer = servers.find(s => s._id === formData.serverId);
       const isAssignedServer = user.allowedServers?.some(allowedServerId => {
         const allowedId = allowedServerId._id || allowedServerId;
@@ -246,13 +246,14 @@ const DeviceForm = ({ deviceData, servers, plans, users = [], user, onSubmit, on
 
           <div className="form-row">
             <div className="form-group">
-              <label htmlFor="serverId">Server *</label>
+              <label htmlFor="serverId">Server {deviceData ? '(Cannot change)' : '*'}</label>
               <select
                 id="serverId"
                 name="serverId"
                 value={formData.serverId}
                 onChange={handleChange}
-                required
+                required={!deviceData}
+                disabled={!!deviceData}
               >
                 <option value="">Select Server</option>
                 {filteredServers.map((server) => (
@@ -263,6 +264,9 @@ const DeviceForm = ({ deviceData, servers, plans, users = [], user, onSubmit, on
                   </option>
                 ))}
               </select>
+              {deviceData && (
+                <small>Server cannot be changed after creation — use <strong>Migrate</strong> to switch servers.</small>
+              )}
             </div>
 
             <div className="form-group">

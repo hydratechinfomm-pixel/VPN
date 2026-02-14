@@ -231,7 +231,7 @@ const DevicesPage = () => {
           onClose={() => { setShowMigrateModal(false); setMigratingDevice(null); }}
           onSuccess={handleMigrateSuccess}
         />
-      )
+      )}
 
       {showForm && (
         <DeviceForm
