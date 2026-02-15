@@ -28,6 +28,63 @@ PersistentKeepalive = 25
   }
 
   /**
+   * Generate VMess (VMess URL) for V2Ray devices
+   * - Prefer existing device.configFile or device.v2rayUser.clientConfig
+   * - Fallback to a minimal vmess:// URL constructed from server/device fields
+   */
+  static generateVmess(device, server) {
+    // If device already has a vmess URL or JSON, return/normalize it
+    if (device?.configFile) {
+      const cfg = String(device.configFile).trim();
+      if (cfg.startsWith('vmess://')) return cfg;
+      try {
+        const parsed = JSON.parse(cfg);
+        const vmessB64 = Buffer.from(JSON.stringify(parsed)).toString('base64');
+        return `vmess://${vmessB64}`;
+      } catch (err) {
+        // not JSON — return raw config
+        return cfg;
+      }
+    }
+
+    // Prefer v2rayUser.clientConfig when available
+    const v2user = device?.v2rayUser;
+    if (v2user && v2user.clientConfig) {
+      const cfg = String(v2user.clientConfig).trim();
+      if (cfg.startsWith('vmess://')) return cfg;
+      try {
+        const parsed = JSON.parse(cfg);
+        const vmessB64 = Buffer.from(JSON.stringify(parsed)).toString('base64');
+        return `vmess://${vmessB64}`;
+      } catch (err) {
+        return cfg;
+      }
+    }
+
+    // Fallback: construct a minimal VMess JSON and return vmess://<base64(json)>
+    const host = (server && (server.v2ray?.apiBaseUrl || server.host)) || '127.0.0.1';
+    const port = (server && (server.v2ray?.inboundsPort || server.port)) || 443;
+    const id = (v2user && (v2user.userId || v2user.id)) || String(device._id || Date.now());
+
+    const vmessObj = {
+      v: '2',
+      ps: device.name || 'v2ray-user',
+      add: host,
+      port: String(port),
+      id: String(id),
+      aid: '0',
+      net: 'tcp',
+      type: 'none',
+      host: '',
+      path: '',
+      tls: (String(port) === '443' || (server && server.port === 443)) ? 'tls' : ''
+    };
+
+    const vmessB64 = Buffer.from(JSON.stringify(vmessObj)).toString('base64');
+    return `vmess://${vmessB64}`;
+  }
+
+  /**
    * Generate QR code from config
    */
   static async generateQRCode(config) {

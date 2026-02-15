@@ -169,10 +169,13 @@ const DeviceList = ({ devices, onEdit, onDelete, onDownloadConfig, onMigrate }) 
                       borderRadius: '4px',
                       fontSize: '12px',
                       fontWeight: 'bold',
-                      backgroundColor: device.server?.vpnType === 'wireguard' ? '#4CAF50' : '#FF9800',
+                      backgroundColor:
+                        device.server?.vpnType === 'wireguard' ? '#4CAF50' :
+                        device.server?.vpnType === 'v2ray' ? '#6B5AFE' :
+                        '#FF9800',
                       color: 'white'
                     }}>
-                      {device.server?.vpnType === 'wireguard' ? '🔷 WireGuard' : '🔶 Outline'}
+                      {device.server?.vpnType === 'wireguard' ? '🔷 WireGuard' : device.server?.vpnType === 'v2ray' ? '🟣 V2Ray' : '🔶 Outline'}
                     </span>
                   </td>
                   <td>{device.vpnIp}</td>
@@ -352,7 +355,7 @@ const DeviceList = ({ devices, onEdit, onDelete, onDownloadConfig, onMigrate }) 
                             {device.status === 'ACTIVE' ? '⏸️' : '▶️'}
                           </button>
                           {/* Only show disconnect for WireGuard */}
-                          {device.server?.vpnType !== 'outline' && (
+                          {device.server?.vpnType === 'wireguard' && (
                             <button
                               className="btn-icon"
                               onClick={() => handleDisconnect(device)}

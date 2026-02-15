@@ -38,10 +38,12 @@ const QRCodeViewer = ({ device, qrCode, config, onClose, onDownload }) => {
           <div className="qr-code-section">
             <h3>Scan QR Code</h3>
             {qrCode && (
-              <img src={qrCode} alt="WireGuard QR Code" className="qr-image" />
+              <img src={qrCode} alt={`${device?.server?.vpnType || 'device'} QR Code`} className="qr-image" />
             )}
             <p className="qr-instructions">
-              Scan this QR code with your WireGuard app to import the configuration.
+              {device?.server?.vpnType === 'wireguard' && 'Scan this QR code with your WireGuard app to import the configuration.'}
+              {device?.server?.vpnType === 'v2ray' && 'Scan this QR code or import the VMess URL in your V2Ray client.'}
+              {device?.server?.vpnType === 'outline' && 'Scan this QR code or use the access URL in Outline client.'}
             </p>
           </div>
 
@@ -52,7 +54,7 @@ const QRCodeViewer = ({ device, qrCode, config, onClose, onDownload }) => {
             </div>
             <div className="config-actions">
               <button className="btn-primary" onClick={onDownload}>
-                Download .conf File
+                {device?.server?.vpnType === 'wireguard' ? 'Download .conf File' : device?.server?.vpnType === 'v2ray' ? 'Download VMess config' : 'Download Access URL'}
               </button>
               <button
                 className="btn-secondary"

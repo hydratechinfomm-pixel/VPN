@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { encryptString } = require('../utils/crypto');
 
 const vpnServerSchema = new mongoose.Schema(
   {
@@ -8,10 +9,10 @@ const vpnServerSchema = new mongoose.Schema(
       trim: true,
     },
     description: String,
-    // VPN Type: wireguard or outline
+    // VPN Type: wireguard, outline or v2ray
     vpnType: {
       type: String,
-      enum: ['wireguard', 'outline'],
+      enum: ['wireguard', 'outline', 'v2ray'],
       default: 'wireguard',
       required: true,
     },
@@ -137,6 +138,49 @@ const vpnServerSchema = new mongoose.Schema(
         default: 1,
       },
     },
+
+    // V2Ray specific fields
+    v2ray: {
+      accessMethod: {
+        type: String,
+        enum: ['api', 'ssh'],
+        default: 'api',
+      },
+      apiBaseUrl: String,
+      apiPort: {
+        type: Number,
+        default: 8080,
+      },
+      tlsVerify: {
+        type: Boolean,
+        default: true,
+      },
+      apiToken: {
+        type: String,
+        select: false,
+      },
+      ssh: {
+        host: String,
+        port: {
+          type: Number,
+          default: 22,
+        },
+        username: String,
+        password: String,
+        privateKey: {
+          type: String,
+          select: false,
+        },
+      },
+      // Path to v2ray config for SSH editing
+      configPath: {
+        type: String,
+        default: '/etc/v2ray/config.json',
+      },
+      // Default inbound port
+      inboundsPort: Number,
+      version: String,
+    },
     // WireGuard specific fields
     wireguard: {
       interfaceName: {
@@ -186,5 +230,22 @@ const vpnServerSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+// Encrypt sensitive v2ray fields at rest (if ENCRYPTION_KEY provided)
+vpnServerSchema.pre('save', function (next) {
+  try {
+    if (this.v2ray) {
+      if (this.v2ray.apiToken && typeof this.v2ray.apiToken === 'string' && !this.v2ray.apiToken.startsWith('ENC:')) {
+        this.v2ray.apiToken = 'ENC:' + encryptString(this.v2ray.apiToken);
+      }
+      if (this.v2ray.ssh && this.v2ray.ssh.privateKey && typeof this.v2ray.ssh.privateKey === 'string' && !this.v2ray.ssh.privateKey.startsWith('ENC:')) {
+        this.v2ray.ssh.privateKey = 'ENC:' + encryptString(this.v2ray.ssh.privateKey);
+      }
+    }
+    next();
+  } catch (err) {
+    next(err);
+  }
+});
 
 module.exports = mongoose.model('VpnServer', vpnServerSchema);

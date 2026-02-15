@@ -26,6 +26,11 @@ const deviceSchema = new mongoose.Schema(
       type: mongoose.Schema.Types.ObjectId,
       ref: 'AccessKey',
     },
+    // Reference to V2Ray user if using a v2ray server
+    v2rayUser: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'V2rayUser',
+    },
     // WireGuard keys (optional, only for WireGuard servers)
     publicKey: {
       type: String,

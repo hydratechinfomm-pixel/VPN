@@ -42,6 +42,8 @@ const AccessKey = require('../models/AccessKey');
 const DeviceHistory = require('../models/DeviceHistory');
 const WireGuardService = require('../services/WireGuardService');
 const OutlineService = require('../services/OutlineService');
+const V2rayService = require('../services/V2rayService');
+const V2rayUser = require('../models/V2rayUser');
 
 /**
  * Factory function to get the appropriate VPN service
@@ -49,6 +51,9 @@ const OutlineService = require('../services/OutlineService');
 function getVpnService(server) {
   if (server.vpnType === 'outline') {
     return new OutlineService(server);
+  }
+  if (server.vpnType === 'v2ray') {
+    return new V2rayService(server);
   }
   return new WireGuardService(server);
 }
@@ -60,7 +65,7 @@ exports.scheduleServerHealthChecks = () => {
   cron.schedule('*/5 * * * *', async () => {
     try {
       const servers = await VpnServer.find({ isActive: true })
-        .select('+outline.adminAccessKey +outline.ssh.privateKey');
+        .select('+outline.adminAccessKey +outline.ssh.privateKey +v2ray.ssh.privateKey');
       
       for (const server of servers) {
         try {
@@ -133,7 +138,7 @@ exports.scheduleOutlineUsageSync = () => {
   cron.schedule('*/5 * * * *', async () => {
     try {
       const servers = await VpnServer.find({ isActive: true, vpnType: 'outline' })
-        .select('+outline.adminAccessKey +outline.ssh.privateKey');
+        .select('+outline.adminAccessKey +outline.ssh.privateKey +v2ray.ssh.privateKey');
       
       for (const server of servers) {
         try {
@@ -185,6 +190,63 @@ exports.scheduleOutlineUsageSync = () => {
 };
 
 /**
+ * Sync V2Ray device usage every 5 minutes
+ */
+exports.scheduleV2rayUsageSync = () => {
+  cron.schedule('*/5 * * * *', async () => {
+    try {
+      const servers = await VpnServer.find({ isActive: true, vpnType: 'v2ray' })
+        .select('+v2ray.apiToken +v2ray.ssh.privateKey');
+      
+      for (const server of servers) {
+        try {
+          const v2Service = new V2rayService(server);
+          const devices = await Device.find({ server: server._id, isEnabled: true }).populate('v2rayUser');
+
+          // fallback to query by server._id if typo
+          const deviceList = devices && devices.length ? devices : await Device.find({ server: server._id, isEnabled: true }).populate('v2rayUser');
+
+          if (deviceList.length === 0) continue;
+
+          const metricsData = await v2Service.getServerStats();
+          const bytesTransferred = metricsData.bytesTransferredByUserId || {};
+
+          let syncCount = 0;
+          for (const device of deviceList) {
+            const v2user = device.v2rayUser;
+            if (!v2user || !v2user.userId) continue;
+            const bytesUsed = bytesTransferred[v2user.userId] || 0;
+
+            device.usage.bytesReceived = bytesUsed;
+            device.usage.bytesSent = 0;
+            device.usage.lastSync = new Date();
+            await device.save();
+
+            const dbV2user = await V2rayUser.findById(v2user._id);
+            if (dbV2user) {
+              dbV2user.usage.bytesReceived = bytesUsed;
+              dbV2user.usage.bytesSent = 0;
+              dbV2user.usage.lastSync = new Date();
+              await dbV2user.save();
+            }
+
+            syncCount++;
+          }
+
+          console.log(`[V2Ray Usage Sync] Synced ${syncCount} devices from ${server.name}`);
+        } catch (error) {
+          console.error(`[V2Ray Usage Sync] Error syncing ${server.name}:`, error.message);
+        }
+      }
+    } catch (error) {
+      console.error('[V2Ray Usage Sync] Error:', error.message);
+    }
+  });
+
+  console.log('✓ V2Ray usage sync scheduler started (every 5 minutes)');
+};
+
+/**
  * Check and expire devices daily
  */
 exports.scheduleDeviceExpiration = () => {
@@ -207,7 +269,7 @@ exports.scheduleDeviceExpiration = () => {
         if (device.server && device.server.vpnType === 'outline' && device.accessKey) {
           try {
             const server = await VpnServer.findById(device.server._id)
-              .select('+outline.adminAccessKey +outline.ssh.privateKey');
+              .select('+outline.adminAccessKey +outline.ssh.privateKey +v2ray.ssh.privateKey');
             
             if (!server || !server.outline?.adminAccessKey) {
               console.warn(`[Device Expiration] Server ${device.server._id} missing admin access key, skipping Outline API call`);
@@ -243,6 +305,47 @@ exports.scheduleDeviceExpiration = () => {
             // Log error but continue - database status is already updated
             console.error(`[Device Expiration] Failed to pause Outline key for device ${device._id}:`, error.message);
             console.error(`[Device Expiration] Device status updated in database, but Outline API call failed`);
+          }
+        }
+
+        // Handle V2Ray devices - set data limit to 0 to pause
+        if (device.server && device.server.vpnType === 'v2ray' && device.v2rayUser) {
+          try {
+            const server = await VpnServer.findById(device.server._id)
+              .select('+v2ray.ssh.privateKey');
+
+            if (!server || !server.v2ray) {
+              console.warn(`[Device Expiration] Server ${device.server._id} missing v2ray config, skipping V2Ray API call`);
+            } else {
+              const v2Service = new (require('../services/V2rayService'))(server);
+              const v2user = await require('../models/V2rayUser').findById(device.v2rayUser);
+              if (v2user && v2user.userId) {
+                await v2Service.setDataLimit(v2user.userId, 0);
+                device.dataLimit = { bytes: 1, isEnabled: true };
+                await device.save();
+                console.log(`[Device Expiration] Successfully paused V2Ray user for device ${device.name}`);
+                // Update V2rayUser status
+                v2user.status = 'EXPIRED';
+                await v2user.save();
+                // Log history
+                await DeviceHistory.create({
+                  device: device._id,
+                  user: null,
+                  action: 'AUTO_PAUSED_EXPIRED',
+                  reason: 'auto_expired',
+                  changes: {
+                    field: 'status',
+                    oldValue: oldStatus,
+                    newValue: 'EXPIRED',
+                  },
+                  metadata: {
+                    notes: `V2Ray user expired at ${device.expiresAt.toISOString()}`,
+                  },
+                });
+              }
+            }
+          } catch (error) {
+            console.error(`[Device Expiration] Failed to pause V2Ray user for device ${device._id}:`, error.message);
           }
         }
       }
@@ -300,7 +403,7 @@ exports.schedulePlanLimitEnforcement = () => {
           if (device.server && device.server.vpnType === 'outline' && device.accessKey) {
             try {
               const server = await VpnServer.findById(device.server._id)
-                .select('+outline.adminAccessKey +outline.ssh.privateKey');
+                .select('+outline.adminAccessKey +outline.ssh.privateKey +v2ray.ssh.privateKey');
               
               if (!server || !server.outline?.adminAccessKey) {
                 console.warn(`[Plan Enforcement] Server ${device.server._id} missing admin access key, skipping Outline API call`);
@@ -337,6 +440,45 @@ exports.schedulePlanLimitEnforcement = () => {
               console.error(`[Plan Enforcement] Device status updated in database, but Outline API call failed`);
             }
           }
+
+          // Handle V2Ray devices - set data limit to 0 to pause
+          if (device.server && device.server.vpnType === 'v2ray' && device.v2rayUser) {
+            try {
+              const server = await VpnServer.findById(device.server._id)
+                .select('+v2ray.ssh.privateKey');
+
+              if (!server || !server.v2ray) {
+                console.warn(`[Plan Enforcement] Server ${device.server._id} missing v2ray config, skipping V2Ray API call`);
+              } else {
+                const v2Service = new (require('../services/V2rayService'))(server);
+                const v2user = await require('../models/V2rayUser').findById(device.v2rayUser);
+                if (v2user && v2user.userId) {
+                  await v2Service.setDataLimit(v2user.userId, 0);
+                  console.log(`[Plan Enforcement] Successfully paused V2Ray user for device ${device.name}`);
+                  // Update V2rayUser status
+                  v2user.status = 'SUSPENDED';
+                  await v2user.save();
+                  // Log history
+                  await DeviceHistory.create({
+                    device: device._id,
+                    user: null,
+                    action: 'AUTO_PAUSED_LIMIT',
+                    reason: 'auto_limit_reached',
+                    changes: {
+                      field: 'status',
+                      oldValue: 'ACTIVE',
+                      newValue: 'SUSPENDED',
+                    },
+                    metadata: {
+                      notes: `Data limit ${limit} bytes exceeded (used: ${totalUsage} bytes)`,
+                    },
+                  });
+                }
+              }
+            } catch (error) {
+              console.error(`[Plan Enforcement] Failed to pause V2Ray user for device ${device._id}:`, error.message);
+            }
+          }
           disabledCount++;
         }
       }
@@ -359,6 +501,7 @@ exports.initializeSchedulers = () => {
   exports.scheduleServerHealthChecks();
   exports.scheduleUsageSync();
   exports.scheduleOutlineUsageSync();
+  exports.scheduleV2rayUsageSync();
   exports.scheduleDeviceExpiration();
   exports.schedulePlanLimitEnforcement();
   

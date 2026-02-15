@@ -157,12 +157,19 @@ const DevicesPage = () => {
 
   const handleDownloadConfig = async (deviceId, deviceName) => {
     try {
+      // Fetch device to determine vpnType so we can choose an appropriate filename
+      const deviceInfo = await devicesAPI.getOne(deviceId);
+      const vpnType = deviceInfo?.server?.vpnType;
+
       const response = await devicesAPI.getConfig(deviceId);
       const blob = new Blob([response], { type: 'text/plain' });
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `${deviceName || 'device'}.conf`;
+      let ext = 'conf';
+      if (vpnType === 'outline') ext = 'txt';
+      else if (vpnType === 'v2ray') ext = 'vmess.txt';
+      a.download = `${deviceName || 'device'}.${ext}`;
       document.body.appendChild(a);
       a.click();
       window.URL.revokeObjectURL(url);
@@ -199,6 +206,7 @@ const DevicesPage = () => {
         >
           <option value="">All VPN Types</option>
           <option value="wireguard">🔷 WireGuard</option>
+          <option value="v2ray">🟣 V2Ray</option>
           <option value="outline">🔶 Outline</option>
         </select>
 

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 
-const ServerListAdvanced = ({ servers, loading, onEdit, onDelete, onRefresh, onHealthCheck, onSyncOutline }) => {
+const ServerListAdvanced = ({ servers, loading, onEdit, onDelete, onRefresh, onHealthCheck, onSyncOutline, onSyncV2ray }) => {
   const [checkingHealth, setCheckingHealth] = useState({});
   const [healthStatus, setHealthStatus] = useState({});
 
@@ -88,10 +88,10 @@ const ServerListAdvanced = ({ servers, loading, onEdit, onDelete, onRefresh, onH
                       borderRadius: '4px',
                       fontSize: '12px',
                       fontWeight: 'bold',
-                      backgroundColor: server.vpnType === 'wireguard' ? '#4CAF50' : '#FF9800',
+                    backgroundColor: server.vpnType === 'wireguard' ? '#4CAF50' : server.vpnType === 'v2ray' ? '#6B5AFE' : '#FF9800',
                       color: 'white'
                     }}>
-                      {server.vpnType === 'wireguard' ? '🔷 WireGuard' : '🔶 Outline'}
+                      {server.vpnType === 'wireguard' ? '🔷 WireGuard' : server.vpnType === 'v2ray' ? '🟣 V2Ray' : '🔶 Outline'}
                     </span>
                   </td>
                   <td>
@@ -159,6 +159,15 @@ const ServerListAdvanced = ({ servers, loading, onEdit, onDelete, onRefresh, onH
                       title="Sync Access Keys from Server"
                     >
                       ↻ Sync
+                    </button>
+                  )}
+                  {server.vpnType === 'v2ray' && (
+                    <button
+                      className="btn-small btn-info"
+                      onClick={() => onSyncV2ray(server._id)}
+                      title="Sync V2Ray users from Server"
+                    >
+                      ↻ Sync V2Ray
                     </button>
                   )}
                   <button

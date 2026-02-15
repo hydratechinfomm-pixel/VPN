@@ -98,6 +98,8 @@ export const serversAPI = {
   getDevices: (serverId) => api.get(`/servers/${serverId}/devices`),
   getWireGuardStatus: (serverId) => api.get(`/servers/${serverId}/wireguard-status`),
   syncOutline: (serverId) => api.post(`/servers/${serverId}/sync-outline`),
+  syncV2ray: (serverId) => api.post(`/servers/${serverId}/v2ray/sync`),
+  listV2rayUsers: (serverId) => api.get(`/servers/${serverId}/v2ray/users`),
 };
 
 // Users API

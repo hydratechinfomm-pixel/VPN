@@ -108,6 +108,18 @@ const ServersPage = () => {
     }
   };
 
+  const handleSyncV2ray = async (serverId) => {
+    try {
+      const response = await serversAPI.syncV2ray(serverId);
+      setError('');
+      alert(`✅ Synced! Imported ${response.synced} new users. Skipped ${response.skipped} existing users.`);
+      fetchServers();
+    } catch (err) {
+      setError(`Sync failed: ${err.response?.data?.error || err.message}`);
+      console.error(err);
+    }
+  };
+
   return (
     <div className="servers-page">
       <div className="page-header">
@@ -135,6 +147,7 @@ const ServersPage = () => {
         onRefresh={fetchServers}
         onHealthCheck={handleHealthCheck}
         onSyncOutline={handleSyncOutline}
+        onSyncV2ray={handleSyncV2ray}
       />
     </div>
   );

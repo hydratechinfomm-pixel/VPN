@@ -3,6 +3,7 @@ const Device = require('../models/Device');
 const AccessKey = require('../models/AccessKey');
 const WireGuardService = require('../services/WireGuardService');
 const OutlineService = require('../services/OutlineService');
+const V2rayService = require('../services/V2rayService');
 const { logActivity } = require('../middleware/auth');
 const constants = require('../config/constants');
 
@@ -12,6 +13,9 @@ const constants = require('../config/constants');
 function getVpnService(server) {
   if (server.vpnType === 'outline') {
     return new OutlineService(server);
+  }
+  if (server.vpnType === 'v2ray') {
+    return new V2rayService(server);
   }
   return new WireGuardService(server);
 }
@@ -142,8 +146,8 @@ exports.createServer = async (req, res) => {
     } = req.body;
 
     // Validate VPN type
-    if (!['wireguard', 'outline'].includes(vpnType)) {
-      return res.status(400).json({ error: 'Invalid vpnType. Must be "wireguard" or "outline"' });
+    if (!['wireguard', 'outline', 'v2ray'].includes(vpnType)) {
+      return res.status(400).json({ error: 'Invalid vpnType. Must be "wireguard", "outline" or "v2ray"' });
     }
 
     // Validate required Outline fields
@@ -189,6 +193,32 @@ exports.createServer = async (req, res) => {
         certSha256: outlineCertSha256,
         accessMethod: outlineAccessMethod || 'api',
         ssh: outlineAccessMethod === 'ssh' ? {
+          host: sshHost || host,
+          port: sshPort || 22,
+          username: sshUsername,
+          password: sshPassword,
+          privateKey: sshPrivateKey,
+        } : {},
+      };
+    } else if (vpnType === 'v2ray') {
+      // v2ray-specific configuration
+      const {
+        v2rayApiPort,
+        v2rayApiBaseUrl,
+        v2rayApiToken,
+        v2rayTlsVerify,
+        v2rayAccessMethod,
+        v2rayConfigPath,
+      } = req.body;
+
+      serverData.v2ray = {
+        apiBaseUrl: v2rayApiBaseUrl || host,
+        apiPort: v2rayApiPort || 8080,
+        tlsVerify: v2rayTlsVerify !== undefined ? v2rayTlsVerify : true,
+        apiToken: v2rayApiToken,
+        accessMethod: v2rayAccessMethod || 'api',
+        configPath: v2rayConfigPath || '/etc/v2ray/config.json',
+        ssh: v2rayAccessMethod === 'ssh' ? {
           host: sshHost || host,
           port: sshPort || 22,
           username: sshUsername,
@@ -245,7 +275,7 @@ exports.getServer = async (req, res) => {
     const { serverId } = req.params;
 
     const server = await VpnServer.findById(serverId)
-      .select('+outline.adminAccessKey +outline.ssh.privateKey')
+      .select('+outline.adminAccessKey +outline.ssh.privateKey +v2ray.ssh.privateKey')
       .populate('devices');
 
     if (!server) {
@@ -267,7 +297,7 @@ exports.updateServer = async (req, res) => {
     const { name, description, serverType, region, country, city, provider } = req.body;
 
     const server = await VpnServer.findById(serverId)
-      .select('+outline.adminAccessKey +outline.ssh.privateKey');
+      .select('+outline.adminAccessKey +outline.ssh.privateKey +v2ray.ssh.privateKey');
     if (!server) {
       return res.status(404).json({ error: 'Server not found' });
     }
@@ -363,7 +393,7 @@ exports.healthCheckServer = async (req, res) => {
 
     // Load server with admin keys for Outline
     const server = await VpnServer.findById(serverId)
-      .select('+outline.adminAccessKey +outline.ssh.privateKey +wireguard.ssh.privateKey');
+      .select('+outline.adminAccessKey +outline.ssh.privateKey +v2ray.ssh.privateKey +wireguard.ssh.privateKey');
     
     if (!server) {
       return res.status(404).json({ error: 'Server not found' });
@@ -493,7 +523,7 @@ exports.syncOutlineAccessKeys = async (req, res) => {
     const userId = req.userId;
 
     const server = await VpnServer.findById(serverId)
-      .select('+outline.adminAccessKey +outline.ssh.privateKey');
+      .select('+outline.adminAccessKey +outline.ssh.privateKey +v2ray.ssh.privateKey');
     if (!server) {
       return res.status(404).json({ error: 'Server not found' });
     }
@@ -599,6 +629,94 @@ exports.syncOutlineAccessKeys = async (req, res) => {
     }
   } catch (error) {
     console.error('Error syncing outline keys:', error);
+    res.status(500).json({ error: error.message });
+  }
+};
+
+/**
+ * List V2Ray users on server (admin)
+ */
+exports.listV2rayUsers = async (req, res) => {
+  try {
+    const { serverId } = req.params;
+    const server = await VpnServer.findById(serverId).select('+v2ray.apiToken +v2ray.ssh.privateKey');
+    if (!server) return res.status(404).json({ error: 'Server not found' });
+    if (server.vpnType !== 'v2ray') return res.status(400).json({ error: 'This server is not a V2Ray server' });
+
+    const vpnService = getVpnService(server);
+    try {
+      const users = await vpnService.listUsers();
+      return res.json({ total: Array.isArray(users) ? users.length : 0, users });
+    } catch (err) {
+      return res.status(500).json({ error: err.message });
+    }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+/**
+ * Sync V2Ray users from server to database (admin)
+ */
+exports.syncV2rayUsers = async (req, res) => {
+  try {
+    const { serverId } = req.params;
+    const userId = req.userId;
+
+    const server = await VpnServer.findById(serverId).select('+v2ray.apiToken +v2ray.ssh.privateKey');
+    if (!server) return res.status(404).json({ error: 'Server not found' });
+    if (server.vpnType !== 'v2ray') return res.status(400).json({ error: 'This server is not a V2Ray server' });
+
+    const vpnService = getVpnService(server);
+
+    try {
+      const resp = await vpnService.listUsers();
+      const remoteUsers = resp.users || resp || [];
+
+      let syncedCount = 0;
+      let skippedCount = 0;
+
+      for (const rUser of remoteUsers) {
+        const existing = await require('../models/V2rayUser').findOne({ server: serverId, userId: rUser.id });
+        if (!existing) {
+          const device = new Device({
+            name: rUser.name || `V2Ray ${rUser.id}`,
+            server: serverId,
+            dataLimit: rUser.dataLimit || null,
+            isUnlimited: !rUser.dataLimit,
+            status: 'ACTIVE',
+            configFile: rUser.clientConfig || rUser.vmess || rUser.accessUrl || null,
+          });
+          await device.save();
+
+          const v2user = new (require('../models/V2rayUser'))({
+            server: serverId,
+            device: device._id,
+            userId: rUser.id,
+            clientConfig: rUser.clientConfig || rUser.vmess || JSON.stringify(rUser),
+            name: rUser.name || `user-${rUser.id}`,
+            dataLimit: rUser.dataLimit || null,
+            status: 'ACTIVE',
+          });
+          await v2user.save();
+
+          syncedCount++;
+        } else {
+          skippedCount++;
+        }
+      }
+
+      server.stats.totalUsers = remoteUsers.length;
+      await server.save();
+
+      await logActivity(userId, 'SYNC_V2RAY', 'SERVER', serverId, true);
+
+      res.json({ message: 'V2Ray users synced', synced: syncedCount, skipped: skippedCount, total: remoteUsers.length });
+    } catch (error) {
+      return res.status(400).json({ error: `Failed to sync v2ray users: ${error.message}` });
+    }
+  } catch (error) {
+    console.error('Error syncing v2ray users:', error);
     res.status(500).json({ error: error.message });
   }
 };

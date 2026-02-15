@@ -5,7 +5,7 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
     // Basic info
     name: server?.name || '',
     description: server?.description || '',
-    vpnType: server?.vpnType || 'wireguard', // 'wireguard' or 'outline'
+    vpnType: server?.vpnType || 'wireguard', // 'wireguard', 'outline' or 'v2ray'
     serverType: server?.serverType || 'REGULAR', // Server tier
     region: server?.region || '',
     provider: server?.provider || 'Custom',
@@ -14,7 +14,7 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
 
     // Network
     host: server?.host || '',
-    port: server?.port || (server?.vpnType === 'outline' ? 443 : 51820),
+    port: server?.port || (server?.vpnType === 'wireguard' ? 51820 : 443),
 
     // WireGuard settings
     wireguardInterfaceName: server?.wireguard?.interfaceName || 'wg0',
@@ -30,10 +30,18 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
     outlineCertSha256: server?.outline?.certSha256 || '',
     outlineAccessMethod: server?.outline?.accessMethod || 'api',
 
-    // SSH settings (shared for both)
-    sshHost: server?.wireguard?.ssh?.host || server?.outline?.ssh?.host || server?.host || '',
-    sshPort: server?.wireguard?.ssh?.port || server?.outline?.ssh?.port || 22,
-    sshUsername: server?.wireguard?.ssh?.username || server?.outline?.ssh?.username || '',
+    // V2Ray settings
+    v2rayApiPort: server?.v2ray?.apiPort || 8080,
+    v2rayApiBaseUrl: server?.v2ray?.apiBaseUrl || server?.host || '',
+    v2rayApiToken: server?.v2ray?.apiToken || '',
+    v2rayTlsVerify: server?.v2ray?.tlsVerify !== undefined ? server.v2ray.tlsVerify : true,
+    v2rayAccessMethod: server?.v2ray?.accessMethod || 'api',
+    v2rayConfigPath: server?.v2ray?.configPath || '/etc/v2ray/config.json',
+
+    // SSH settings (shared for all types)
+    sshHost: server?.wireguard?.ssh?.host || server?.outline?.ssh?.host || server?.v2ray?.ssh?.host || server?.host || '',
+    sshPort: server?.wireguard?.ssh?.port || server?.outline?.ssh?.port || server?.v2ray?.ssh?.port || 22,
+    sshUsername: server?.wireguard?.ssh?.username || server?.outline?.ssh?.username || server?.v2ray?.ssh?.username || '',
     sshPassword: '',
     sshPrivateKey: '',
   });
@@ -142,6 +150,16 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
                     onChange={handleChange}
                   />
                   <span>🔶 Outline (Easy-to-use VPN platform)</span>
+                </label>
+                <label>
+                  <input
+                    type="radio"
+                    name="vpnType"
+                    value="v2ray"
+                    checked={formData.vpnType === 'v2ray'}
+                    onChange={handleChange}
+                  />
+                  <span>🟣 V2Ray (VMess)</span>
                 </label>
               </div>
             </div>
@@ -400,90 +418,194 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
                   </button>
                 </div>
               )}
+            </>
+          )}
+
+          {/* V2Ray settings */}
+          {formData.vpnType === 'v2ray' && (
+            <>
+              <h3>V2Ray (VMess) Server Settings</h3>
 
               <div className="form-row">
                 <div className="form-group">
-                  <label htmlFor="outlineApiPort">Management API Port *</label>
+                  <label htmlFor="v2rayApiBaseUrl">API Base URL</label>
                   <input
-                    type="number"
-                    id="outlineApiPort"
-                    name="outlineApiPort"
-                    value={formData.outlineApiPort}
+                    type="text"
+                    id="v2rayApiBaseUrl"
+                    name="v2rayApiBaseUrl"
+                    value={formData.v2rayApiBaseUrl}
                     onChange={handleChange}
-                    required
-                    placeholder="8081"
+                    placeholder="e.g., https://1.2.3.4"
                   />
-                  <small>Default: 8081</small>
+                  <small>Optional: management API base URL for V2Ray helper (if available)</small>
                 </div>
 
                 <div className="form-group">
-                  <label htmlFor="outlineAccessKeyPort">Access Key Port *</label>
+                  <label htmlFor="v2rayApiPort">API Port</label>
                   <input
                     type="number"
-                    id="outlineAccessKeyPort"
-                    name="outlineAccessKeyPort"
-                    value={formData.outlineAccessKeyPort}
+                    id="v2rayApiPort"
+                    name="v2rayApiPort"
+                    value={formData.v2rayApiPort}
                     onChange={handleChange}
-                    required
-                    placeholder="8388"
+                    placeholder="8080"
                   />
-                  <small>Default: 8388</small>
                 </div>
               </div>
 
-              <div className="form-group">
-                <label htmlFor="outlineAdminAccessKey">Admin Access Key *</label>
-                <input
-                  type="password"
-                  id="outlineAdminAccessKey"
-                  name="outlineAdminAccessKey"
-                  value={formData.outlineAdminAccessKey}
-                  onChange={handleChange}
-                  placeholder="Paste admin access key from Outline server"
-                />
-                <small>Get this from your Outline server management interface</small>
+              <div className="form-row">
+                <div className="form-group">
+                  <label htmlFor="v2rayApiToken">API Token</label>
+                  <input
+                    type="text"
+                    id="v2rayApiToken"
+                    name="v2rayApiToken"
+                    value={formData.v2rayApiToken}
+                    onChange={handleChange}
+                    placeholder="Optional API token for management API"
+                  />
+                </div>
+
+                <div className="form-group">
+                  <label htmlFor="v2rayConfigPath">Config Path (SSH mode)</label>
+                  <input
+                    type="text"
+                    id="v2rayConfigPath"
+                    name="v2rayConfigPath"
+                    value={formData.v2rayConfigPath}
+                    onChange={handleChange}
+                    placeholder="/etc/v2ray/config.json"
+                  />
+                </div>
               </div>
 
+              <h3>V2Ray Access Method</h3>
               <div className="form-group">
-                <label htmlFor="outlineCertSha256">Certificate SHA256 (optional)</label>
-                <input
-                  type="text"
-                  id="outlineCertSha256"
-                  name="outlineCertSha256"
-                  value={formData.outlineCertSha256}
-                  onChange={handleChange}
-                  placeholder="Leave empty for self-signed certificates"
-                />
-              </div>
-
-              <h3>Outline Access Method</h3>
-              <div className="form-group">
-                <label>How should the panel access the Outline server? *</label>
+                <label>How should the panel access this V2Ray server? *</label>
                 <div className="radio-group">
                   <label>
                     <input
                       type="radio"
-                      name="outlineAccessMethod"
+                      name="v2rayAccessMethod"
                       value="api"
-                      checked={formData.outlineAccessMethod === 'api'}
+                      checked={formData.v2rayAccessMethod === 'api'}
                       onChange={handleChange}
                     />
-                    <span>API (Direct API calls)</span>
+                    <span>API (preferred)</span>
                   </label>
                   <label>
                     <input
                       type="radio"
-                      name="outlineAccessMethod"
+                      name="v2rayAccessMethod"
                       value="ssh"
-                      checked={formData.outlineAccessMethod === 'ssh'}
+                      checked={formData.v2rayAccessMethod === 'ssh'}
                       onChange={handleChange}
                     />
-                    <span>SSH (Remote server via SSH)</span>
+                    <span>SSH (remote V2Ray server)</span>
                   </label>
                 </div>
               </div>
+
+              <div className="form-group">
+                <label htmlFor="v2rayTlsVerify">TLS Verify</label>
+                <div className="radio-group">
+                  <label>
+                    <input
+                      type="checkbox"
+                      id="v2rayTlsVerify"
+                      name="v2rayTlsVerify"
+                      checked={!!formData.v2rayTlsVerify}
+                      onChange={handleChange}
+                    />
+                    <span>Verify TLS certificate when connecting to management API</span>
+                  </label>
+                </div>
+                <small>Disable only for self-signed certs (not recommended)</small>
+              </div>
             </>
           )}
+
+          <div className="form-row">
+            <div className="form-group">
+              <label htmlFor="outlineApiPort">Management API Port *</label>
+              <input
+                type="number"
+                id="outlineApiPort"
+                name="outlineApiPort"
+                value={formData.outlineApiPort}
+                onChange={handleChange}
+                required
+                placeholder="8081"
+              />
+              <small>Default: 8081</small>
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="outlineAccessKeyPort">Access Key Port *</label>
+              <input
+                type="number"
+                id="outlineAccessKeyPort"
+                name="outlineAccessKeyPort"
+                value={formData.outlineAccessKeyPort}
+                onChange={handleChange}
+                required
+                placeholder="8388"
+              />
+              <small>Default: 8388</small>
+            </div>
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="outlineAdminAccessKey">Admin Access Key *</label>
+            <input
+              type="password"
+              id="outlineAdminAccessKey"
+              name="outlineAdminAccessKey"
+              value={formData.outlineAdminAccessKey}
+              onChange={handleChange}
+              placeholder="Paste admin access key from Outline server"
+            />
+            <small>Get this from your Outline server management interface</small>
+          </div>
+
+          <div className="form-group">
+            <label htmlFor="outlineCertSha256">Certificate SHA256 (optional)</label>
+            <input
+              type="text"
+              id="outlineCertSha256"
+              name="outlineCertSha256"
+              value={formData.outlineCertSha256}
+              onChange={handleChange}
+              placeholder="Leave empty for self-signed certificates"
+            />
+          </div>
+
+          <h3>Outline Access Method</h3>
+          <div className="form-group">
+            <label>How should the panel access the Outline server? *</label>
+            <div className="radio-group">
+              <label>
+                <input
+                  type="radio"
+                  name="outlineAccessMethod"
+                  value="api"
+                  checked={formData.outlineAccessMethod === 'api'}
+                  onChange={handleChange}
+                />
+                <span>API (Direct API calls)</span>
+              </label>
+              <label>
+                <input
+                  type="radio"
+                  name="outlineAccessMethod"
+                  value="ssh"
+                  checked={formData.outlineAccessMethod === 'ssh'}
+                  onChange={handleChange}
+                />
+                <span>SSH (Remote server via SSH)</span>
+              </label>
+            </div>
+          </div>
 
           {/* SSH settings (shared, shown if using SSH access) */}
           {((formData.vpnType === 'wireguard' && formData.wireguardAccessMethod === 'ssh') ||

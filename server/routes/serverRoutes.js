@@ -23,8 +23,8 @@ router.post(
     body('host').notEmpty().withMessage('Host/IP address is required'),
     body('vpnType')
       .optional()
-      .isIn(['wireguard', 'outline'])
-      .withMessage('VPN type must be either "wireguard" or "outline"'),
+      .isIn(['wireguard', 'outline', 'v2ray'])
+      .withMessage('VPN type must be either "wireguard", "outline" or "v2ray"'),
     body('port')
       .optional()
       .isInt({ min: 1, max: 65535 })
@@ -80,6 +80,32 @@ router.post(
       .optional()
       .isIn(['api', 'ssh'])
       .withMessage('Outline access method must be either api or ssh'),
+
+    // V2Ray specific validation
+    body('v2rayApiPort')
+      .optional()
+      .isInt({ min: 1, max: 65535 })
+      .withMessage('v2ray API port must be between 1 and 65535'),
+    body('v2rayApiBaseUrl')
+      .optional()
+      .isString()
+      .withMessage('v2ray API base URL must be a string'),
+    body('v2rayApiToken')
+      .optional()
+      .isString()
+      .withMessage('v2ray API token must be a string'),
+    body('v2rayTlsVerify')
+      .optional()
+      .isBoolean()
+      .withMessage('v2ray TLS verify must be a boolean'),
+    body('v2rayAccessMethod')
+      .optional()
+      .isIn(['api', 'ssh'])
+      .withMessage('v2ray access method must be either api or ssh'),
+    body('v2rayConfigPath')
+      .optional()
+      .isString()
+      .withMessage('v2ray config path must be a string'),
   ],
   validateRequest,
   serverController.createServer
@@ -123,5 +149,9 @@ router.get('/:serverId/outline-status', authorizePanelAdmin, serverController.ge
 
 // Sync Outline access keys from server to database (admin only)
 router.post('/:serverId/sync-outline', authorizeAdmin, serverController.syncOutlineAccessKeys);
+
+// V2Ray: list remote users (panel admin) and sync remote users into DB (admin)
+router.get('/:serverId/v2ray/users', authorizePanelAdmin, serverController.listV2rayUsers);
+router.post('/:serverId/v2ray/sync', authorizeAdmin, serverController.syncV2rayUsers);
 
 module.exports = router;

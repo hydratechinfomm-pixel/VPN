@@ -1,5 +1,6 @@
 const Device = require('../models/Device');
 const AccessKey = require('../models/AccessKey');
+const V2rayUser = require('../models/V2rayUser');
 const VpnServer = require('../models/VpnServer');
 const User = require('../models/User');
 const DeviceHistory = require('../models/DeviceHistory');
@@ -8,6 +9,7 @@ const Plan = require('../models/Plan');
 const mongoose = require('mongoose');
 const WireGuardService = require('../services/WireGuardService');
 const OutlineService = require('../services/OutlineService');
+const V2rayService = require('../services/V2rayService');
 const ConfigGenerator = require('../utils/ConfigGenerator');
 const { logActivity } = require('../middleware/auth');
 
@@ -17,6 +19,9 @@ const { logActivity } = require('../middleware/auth');
 function getVpnService(server) {
   if (server.vpnType === 'outline') {
     return new OutlineService(server);
+  }
+  if (server.vpnType === 'v2ray') {
+    return new V2rayService(server);
   }
   return new WireGuardService(server);
 }
@@ -31,7 +36,7 @@ exports.createDevice = async (req, res) => {
 
     // Verify server exists - select hidden fields for Outline
     const server = await VpnServer.findById(serverId)
-      .select('+outline.adminAccessKey +outline.ssh.privateKey');
+      .select('+outline.adminAccessKey +outline.ssh.privateKey +v2ray.ssh.privateKey');
     if (!server) {
       return res.status(404).json({ error: 'Server not found' });
     }
@@ -86,6 +91,8 @@ exports.createDevice = async (req, res) => {
       return await createWireGuardDevice(req, res, server, vpnService, requesterId, deviceOwnerId, requester);
     } else if (server.vpnType === 'outline') {
       return await createOutlineDevice(req, res, server, vpnService, requesterId, deviceOwnerId, requester);
+    } else if (server.vpnType === 'v2ray') {
+      return await createV2rayDevice(req, res, server, vpnService, requesterId, deviceOwnerId, requester);
     } else {
       return res.status(400).json({ error: 'Unsupported VPN type' });
     }
@@ -347,6 +354,135 @@ async function createOutlineDevice(req, res, server, vpnService, requesterId, de
 }
 
 /**
+ * Create V2Ray (VMess) device
+ */
+async function createV2rayDevice(req, res, server, vpnService, requesterId, deviceOwnerId, requester) {
+  const { name, planId, dataLimit, expiresAt } = req.body;
+
+  try {
+    // Create user on V2Ray server
+    let v2rayData;
+    try {
+      v2rayData = await vpnService.addUser({
+        name: name || `User-${Date.now()}`,
+        limit: dataLimit || 0,
+        expiresAt,
+      });
+    } catch (error) {
+      return res.status(500).json({ error: `Failed to create v2ray user: ${error.message}` });
+    }
+
+    // Create Device reference
+    const device = new Device({
+      name,
+      user: deviceOwnerId || null,
+      server: server._id,
+      plan: planId || null,
+      dataLimit: dataLimit ? { bytes: dataLimit, isEnabled: true } : null,
+      isUnlimited: !dataLimit,
+      expiresAt,
+      status: 'ACTIVE',
+      configFile: v2rayData.clientConfig || v2rayData.accessUrl || null,
+    });
+
+    await device.save();
+
+    // Create V2rayUser document
+    const v2user = new V2rayUser({
+      server: server._id,
+      device: device._id,
+      user: deviceOwnerId || null,
+      userId: v2rayData.userId || v2rayData.id || String(Date.now()),
+      clientConfig: v2rayData.clientConfig || JSON.stringify(v2rayData),
+      name: name || v2rayData.name,
+      dataLimit: dataLimit ? { bytes: dataLimit, isEnabled: true } : null,
+      status: 'ACTIVE',
+      expiresAt,
+    });
+
+    await v2user.save();
+
+    // Link device to v2rayUser
+    device.v2rayUser = v2user._id;
+    await device.save();
+
+    // Add to device owner's devices if assigned
+    let deviceOwnerUsername = undefined;
+    if (deviceOwnerId) {
+      const deviceOwner = await User.findById(deviceOwnerId);
+      if (deviceOwner) {
+        deviceOwnerUsername = deviceOwner.username;
+        deviceOwner.devices.push(device._id);
+        await deviceOwner.save();
+      }
+    }
+
+    // Add to server's devices
+    server.devices.push(device._id);
+    server.stats.totalUsers += 1;
+    await server.save();
+
+    // Record sale transaction (only when plan is selected)
+    if (planId) {
+      try {
+        const plan = await Plan.findById(planId);
+        if (plan) {
+          await SalesTransaction.create({
+            deviceId: device._id,
+            deviceName: device.name,
+            plan: plan._id,
+            planName: plan.name,
+            planPrice: plan.price || 0,
+            planCurrency: plan.currency || 'USD',
+            planBillingCycle: plan.billingCycle,
+            server: server._id,
+            serverName: server.name,
+            serverType: server.serverType,
+            user: deviceOwnerId || null,
+            userName: deviceOwnerUsername,
+            createdBy: requesterId,
+            createdByName: requester?.username,
+            expiresAt: device.expiresAt,
+            metadata: {
+              deviceStatus: device.status,
+            },
+          });
+        }
+      } catch (e) {
+        console.error('[SalesTransaction] Failed to record sale:', e.message);
+      }
+    }
+
+    await logActivity(requesterId, 'CREATE_DEVICE', 'DEVICE', device._id, true);
+
+    // Log device history
+    await DeviceHistory.create({
+      device: device._id,
+      user: requesterId,
+      action: 'CREATED',
+      reason: 'manual',
+      metadata: {
+        notes: `V2Ray device created on server ${server.name}${deviceOwnerId && deviceOwnerId !== requesterId ? ` and assigned to user ${deviceOwnerId}` : ''}`,
+      },
+    });
+
+    res.status(201).json({
+      message: 'V2Ray (VMess) user created successfully',
+      device,
+      v2rayUser: {
+        id: v2user._id,
+        userId: v2user.userId,
+        clientConfig: v2user.clientConfig,
+        name: v2user.name,
+      },
+    });
+  } catch (error) {
+    console.error('Error creating V2Ray device:', error);
+    res.status(500).json({ error: error.message });
+  }
+}
+
+/**
  * Get all devices for user
  */
 exports.getDevices = async (req, res) => {
@@ -410,7 +546,7 @@ exports.getDevices = async (req, res) => {
             console.log(`[getDevices] Fetching usage for Outline device ${device.name}, accessKeyId: ${device.accessKey.accessKeyId}`);
             
             const server = await VpnServer.findById(device.server._id)
-              .select('+outline.adminAccessKey +outline.ssh.privateKey');
+              .select('+outline.adminAccessKey +outline.ssh.privateKey +v2ray.ssh.privateKey');
             
             if (server) {
               const vpnService = getVpnService(server);
@@ -642,7 +778,7 @@ exports.migrateDevice = async (req, res) => {
     if (!device) return res.status(404).json({ error: 'Device not found' });
 
     // Only Outline devices supported for now
-    const sourceServer = await VpnServer.findById(device.server).select('+outline.adminAccessKey +outline.ssh.privateKey');
+    const sourceServer = await VpnServer.findById(device.server).select('+outline.adminAccessKey +outline.ssh.privateKey +v2ray.ssh.privateKey');
     if (!sourceServer || sourceServer.vpnType !== 'outline') {
       return res.status(400).json({ error: 'Only Outline devices can be migrated with this endpoint' });
     }
@@ -655,7 +791,7 @@ exports.migrateDevice = async (req, res) => {
       return res.status(400).json({ error: 'Invalid target server' });
     }
 
-    const targetServer = await VpnServer.findById(targetServerId).select('+outline.adminAccessKey +outline.ssh.privateKey');
+    const targetServer = await VpnServer.findById(targetServerId).select('+outline.adminAccessKey +outline.ssh.privateKey +v2ray.ssh.privateKey');
     if (!targetServer || targetServer.vpnType !== 'outline' || !targetServer.isActive) {
       return res.status(400).json({ error: 'Target server not available or not an Outline server' });
     }
@@ -1138,7 +1274,8 @@ exports.getDeviceConfig = async (req, res) => {
     const { deviceId } = req.params;
     const userId = req.userId;
 
-    const device = await Device.findById(deviceId).populate('server').populate('accessKey');
+    // Populate v2rayUser as well for VMess generation
+    const device = await Device.findById(deviceId).populate('server').populate('accessKey').populate('v2rayUser');
     if (!device) {
       return res.status(404).json({ error: 'Device not found' });
     }
@@ -1159,6 +1296,16 @@ exports.getDeviceConfig = async (req, res) => {
       res.setHeader('Content-Type', 'text/plain');
       res.setHeader('Content-Disposition', `attachment; filename="${device.name}-outline.txt"`);
       res.send(config);
+
+    // For V2Ray servers, return VMess URL (or stored client config)
+    } else if (device.server.vpnType === 'v2ray') {
+      const config = device.configFile || ConfigGenerator.generateVmess(device, device.server);
+      if (!config) return res.status(400).json({ error: 'VMess config not available' });
+
+      res.setHeader('Content-Type', 'text/plain');
+      res.setHeader('Content-Disposition', `attachment; filename="${device.name}-vmess.txt"`);
+      res.send(config);
+
     } else {
       // For WireGuard servers, generate or return stored config
       const config = device.configFile || ConfigGenerator.generateConfig(device, device.server);
@@ -1180,7 +1327,8 @@ exports.getDeviceQR = async (req, res) => {
     const { deviceId } = req.params;
     const userId = req.userId;
 
-    const device = await Device.findById(deviceId).populate('server').populate('accessKey');
+    // Populate v2rayUser for VMess QR generation
+    const device = await Device.findById(deviceId).populate('server').populate('accessKey').populate('v2rayUser');
     if (!device) {
       return res.status(404).json({ error: 'Device not found' });
     }
@@ -1199,6 +1347,14 @@ exports.getDeviceQR = async (req, res) => {
       }
       const qrCode = await ConfigGenerator.generateQRCode(accessUrl);
       res.json({ qrCode, config: accessUrl });
+
+    // For V2Ray servers, return VMess QR / URL
+    } else if (device.server.vpnType === 'v2ray') {
+      const config = device.configFile || ConfigGenerator.generateVmess(device, device.server);
+      if (!config) return res.status(400).json({ error: 'VMess config not available' });
+      const qrCode = await ConfigGenerator.generateQRCode(config);
+      res.json({ qrCode, config });
+
     } else {
       // For WireGuard servers, generate QR from config
       const config = device.configFile || ConfigGenerator.generateConfig(device, device.server);

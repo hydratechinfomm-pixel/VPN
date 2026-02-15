@@ -3,7 +3,8 @@ const { Client } = require('ssh2');
 class SSHExecutor {
   constructor(server) {
     this.server = server;
-    this.sshConfig = server.wireguard?.ssh || {};
+    // Prefer explicit ssh config for the service type, fall back to common locations
+    this.sshConfig = server.wireguard?.ssh || server.outline?.ssh || server.v2ray?.ssh || server.ssh || {};
   }
 
   /**
