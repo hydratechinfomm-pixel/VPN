@@ -201,7 +201,7 @@ exports.createServer = async (req, res) => {
         } : {},
       };
     } else if (vpnType === 'v2ray') {
-      // v2ray-specific configuration
+        // v2ray-specific configuration
       const {
         v2rayApiPort,
         v2rayApiBaseUrl,
@@ -210,6 +210,10 @@ exports.createServer = async (req, res) => {
         v2rayAccessMethod,
         v2rayConfigPath,
       } = req.body;
+
+      // Accept privateKey either as top-level `sshPrivateKey` or nested in `v2ray.ssh.privateKey`.
+      const v2rayPrivateKeyFromNested = req.body.v2ray?.ssh?.privateKey;
+      const effectiveV2rayPrivateKey = sshPrivateKey || v2rayPrivateKeyFromNested || undefined;
 
       serverData.v2ray = {
         apiBaseUrl: v2rayApiBaseUrl || host,
@@ -223,9 +227,15 @@ exports.createServer = async (req, res) => {
           port: sshPort || 22,
           username: sshUsername,
           password: sshPassword,
-          privateKey: sshPrivateKey,
+          privateKey: effectiveV2rayPrivateKey,
         } : {},
       };
+
+      // Dev-only diagnostic: log whether we received a private key in the request (do not log the key itself)
+      if (process.env.NODE_ENV !== 'production') {
+        console.log('createServer: v2ray ssh privateKey present in request:', !!sshPrivateKey, 'nested:', !!v2rayPrivateKeyFromNested);
+        console.log('constructed serverData.v2ray.ssh.privateKey present:', !!serverData.v2ray.ssh?.privateKey);
+      }
     }
 
     const server = new VpnServer(serverData);
