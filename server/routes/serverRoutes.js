@@ -65,6 +65,10 @@ router.post(
       .isInt({ min: 1, max: 65535 })
       .withMessage('Outline API port must be between 1 and 65535'),
     body('outlineAdminAccessKey')
+      .if(body('outlineAccessMethod').equals('api'))
+      .notEmpty()
+      .withMessage('Outline admin access key is required when using API'),
+    body('outlineAdminAccessKey')
       .optional()
       .isString()
       .withMessage('Outline admin access key must be a string'),
@@ -80,6 +84,45 @@ router.post(
       .optional()
       .isIn(['api', 'ssh'])
       .withMessage('Outline access method must be either api or ssh'),
+
+    // SSH conditional validators (if any VPN access method uses SSH)
+    body('sshHost')
+      .if((value, { req }) =>
+        req.body.wireguardAccessMethod === 'ssh' ||
+        req.body.outlineAccessMethod === 'ssh' ||
+        req.body.v2rayAccessMethod === 'ssh'
+      )
+      .notEmpty()
+      .withMessage('SSH host is required when SSH access is selected'),
+    body('sshPort')
+      .if((value, { req }) =>
+        req.body.wireguardAccessMethod === 'ssh' ||
+        req.body.outlineAccessMethod === 'ssh' ||
+        req.body.v2rayAccessMethod === 'ssh'
+      )
+      .isInt({ min: 1, max: 65535 })
+      .withMessage('SSH port must be a valid port'),
+    body('sshUsername')
+      .if((value, { req }) =>
+        req.body.wireguardAccessMethod === 'ssh' ||
+        req.body.outlineAccessMethod === 'ssh' ||
+        req.body.v2rayAccessMethod === 'ssh'
+      )
+      .notEmpty()
+      .withMessage('SSH username is required when SSH access is selected'),
+    body()
+      .custom((value, { req }) => {
+        if (
+          (req.body.wireguardAccessMethod === 'ssh' ||
+            req.body.outlineAccessMethod === 'ssh' ||
+            req.body.v2rayAccessMethod === 'ssh') &&
+          !req.body.sshPassword &&
+          !req.body.sshPrivateKey
+        ) {
+          throw new Error('When SSH is selected, provide an SSH password or private key');
+        }
+        return true;
+      }),
 
     // V2Ray specific validation
     body('v2rayApiPort')

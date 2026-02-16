@@ -47,6 +47,7 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
   });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const [formErrors, setFormErrors] = useState({});
   const [useJsonImport, setUseJsonImport] = useState(false);
   const [jsonConfig, setJsonConfig] = useState('');
 
@@ -63,6 +64,9 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
             : parseInt(value, 10)
           : value,
     }));
+
+    // clear field-level error on change
+    setFormErrors((prev) => ({ ...prev, [e.target.name]: undefined }));
   };
 
   const handleJsonImport = () => {
@@ -100,9 +104,79 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
     }
   };
 
+  const validateForm = () => {
+    const errors = {};
+
+    // Basic required fields
+    if (!formData.name || !formData.name.trim()) errors.name = 'Server name is required';
+    if (!formData.host || !formData.host.trim()) errors.host = 'Host/IP is required';
+
+    // VPN-specific validation
+    if (formData.vpnType === 'wireguard') {
+      if (!formData.wireguardInterfaceName) errors.wireguardInterfaceName = 'Interface name is required';
+      if (!formData.wireguardVpnIpRange) errors.wireguardVpnIpRange = 'VPN IP range is required';
+      if (!formData.wireguardPort) errors.wireguardPort = 'WireGuard port is required';
+
+      if (formData.wireguardAccessMethod === 'ssh') {
+        if (!formData.sshHost) errors.sshHost = 'SSH host is required';
+        if (!formData.sshPort) errors.sshPort = 'SSH port is required';
+        if (!formData.sshUsername) errors.sshUsername = 'SSH username is required';
+        if (!formData.sshPassword && !formData.sshPrivateKey) {
+          errors.sshPrivateKey = 'Provide SSH password or private key';
+        }
+      }
+    }
+
+    if (formData.vpnType === 'outline') {
+      if (!formData.outlineApiPort) errors.outlineApiPort = 'Outline API port is required';
+      if (!formData.outlineAccessKeyPort) errors.outlineAccessKeyPort = 'Access key port is required';
+      if (formData.outlineAccessMethod === 'api' && !formData.outlineAdminAccessKey) {
+        errors.outlineAdminAccessKey = 'Admin access key is required for API access';
+      }
+
+      if (formData.outlineAccessMethod === 'ssh') {
+        if (!formData.sshHost) errors.sshHost = 'SSH host is required';
+        if (!formData.sshPort) errors.sshPort = 'SSH port is required';
+        if (!formData.sshUsername) errors.sshUsername = 'SSH username is required';
+        if (!formData.sshPassword && !formData.sshPrivateKey) {
+          errors.sshPrivateKey = 'Provide SSH password or private key';
+        }
+      }
+    }
+
+    if (formData.vpnType === 'v2ray') {
+      if (formData.v2rayAccessMethod === 'ssh') {
+        if (!formData.sshHost) errors.sshHost = 'SSH host is required';
+        if (!formData.sshPort) errors.sshPort = 'SSH port is required';
+        if (!formData.sshUsername) errors.sshUsername = 'SSH username is required';
+        if (!formData.sshPassword && !formData.sshPrivateKey) {
+          errors.sshPrivateKey = 'Provide SSH password or private key';
+        }
+      }
+
+      if (formData.v2rayApiBaseUrl) {
+        try {
+          // basic URL validation
+          // eslint-disable-next-line no-new
+          new URL(formData.v2rayApiBaseUrl);
+        } catch (err) {
+          errors.v2rayApiBaseUrl = 'Invalid API Base URL';
+        }
+      }
+    }
+
+    setFormErrors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
+
+    if (!validateForm()) {
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -195,6 +269,11 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
                 required
                 placeholder="e.g., Singapore VPN 1"
               />
+              {formErrors.name && (
+                <div className="error-message" style={{ marginTop: '6px' }}>
+                  {formErrors.name}
+                </div>
+              )}
             </div>
 
             <div className="form-group">
@@ -245,6 +324,11 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
                 required
                 placeholder="e.g., 203.0.113.10 or vpn.example.com"
               />
+              {formErrors.host && (
+                <div className="error-message" style={{ marginTop: '6px' }}>
+                  {formErrors.host}
+                </div>
+              )}
             </div>
           </div>
 
@@ -302,6 +386,11 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
                     required
                     placeholder="wg0"
                   />
+                  {formErrors.wireguardInterfaceName && (
+                    <div className="error-message" style={{ marginTop: '6px' }}>
+                      {formErrors.wireguardInterfaceName}
+                    </div>
+                  )}
                 </div>
 
                 <div className="form-group">
@@ -315,6 +404,11 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
                     required
                     placeholder="51820"
                   />
+                  {formErrors.wireguardPort && (
+                    <div className="error-message" style={{ marginTop: '6px' }}>
+                      {formErrors.wireguardPort}
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -331,6 +425,11 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
                     placeholder="10.0.0.0/24"
                   />
                   <small>Must match the Address range in /etc/wireguard/wg0.conf</small>
+                  {formErrors.wireguardVpnIpRange && (
+                    <div className="error-message" style={{ marginTop: '6px' }}>
+                      {formErrors.wireguardVpnIpRange}
+                    </div>
+                  )}
                 </div>
 
                 <div className="form-group">
@@ -438,6 +537,11 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
                     placeholder="e.g., https://1.2.3.4"
                   />
                   <small>Optional: management API base URL for V2Ray helper (if available)</small>
+                  {formErrors.v2rayApiBaseUrl && (
+                    <div className="error-message" style={{ marginTop: '6px' }}>
+                      {formErrors.v2rayApiBaseUrl}
+                    </div>
+                  )}
                 </div>
 
                 <div className="form-group">
@@ -538,6 +642,11 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
                 placeholder="8081"
               />
               <small>Default: 8081</small>
+              {formErrors.outlineApiPort && (
+                <div className="error-message" style={{ marginTop: '6px' }}>
+                  {formErrors.outlineApiPort}
+                </div>
+              )}
             </div>
 
             <div className="form-group">
@@ -552,6 +661,11 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
                 placeholder="8388"
               />
               <small>Default: 8388</small>
+              {formErrors.outlineAccessKeyPort && (
+                <div className="error-message" style={{ marginTop: '6px' }}>
+                  {formErrors.outlineAccessKeyPort}
+                </div>
+              )}
             </div>
           </div>
 
@@ -564,8 +678,14 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
               value={formData.outlineAdminAccessKey}
               onChange={handleChange}
               placeholder="Paste admin access key from Outline server"
+              required={formData.outlineAccessMethod === 'api'}
             />
             <small>Get this from your Outline server management interface</small>
+            {formErrors.outlineAdminAccessKey && (
+              <div className="error-message" style={{ marginTop: '6px' }}>
+                {formErrors.outlineAdminAccessKey}
+              </div>
+            )}
           </div>
 
           <div className="form-group">
@@ -609,7 +729,8 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
 
           {/* SSH settings (shared, shown if using SSH access) */}
           {((formData.vpnType === 'wireguard' && formData.wireguardAccessMethod === 'ssh') ||
-            (formData.vpnType === 'outline' && formData.outlineAccessMethod === 'ssh')) && (
+            (formData.vpnType === 'outline' && formData.outlineAccessMethod === 'ssh') ||
+            (formData.vpnType === 'v2ray' && formData.v2rayAccessMethod === 'ssh')) && (
             <>
               <h3>SSH Settings (for remote servers)</h3>
               <div className="form-row">
@@ -624,19 +745,18 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
                     required
                     placeholder="Server IP or hostname"
                   />
-                </div>
-
-                <div className="form-group">
-                  <label htmlFor="sshPort">SSH Port *</label>
-                  <input
-                    type="number"
-                    id="sshPort"
-                    name="sshPort"
-                    value={formData.sshPort}
-                    onChange={handleChange}
-                    required
+                  {formErrors.sshHost && (
+                    <div className="error-message" style={{ marginTop: '6px' }}>
+                      {formErrors.sshHost}
+                    </div>
+                  )}
                     placeholder="22"
                   />
+                  {formErrors.sshPort && (
+                    <div className="error-message" style={{ marginTop: '6px' }}>
+                      {formErrors.sshPort}
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -652,6 +772,11 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
                     required
                     placeholder="e.g., root or ubuntu"
                   />
+                  {formErrors.sshUsername && (
+                    <div className="error-message" style={{ marginTop: '6px' }}>
+                      {formErrors.sshUsername}
+                    </div>
+                  )}
                 </div>
 
                 <div className="form-group">
@@ -677,6 +802,11 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
                   rows="4"
                   placeholder="Paste your SSH private key here if not using password"
                 />
+                {formErrors.sshPrivateKey && (
+                  <div className="error-message" style={{ marginTop: '6px' }}>
+                    {formErrors.sshPrivateKey}
+                  </div>
+                )}
               </div>
             </>
           )}
