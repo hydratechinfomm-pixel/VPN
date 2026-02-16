@@ -236,6 +236,15 @@ exports.createServer = async (req, res) => {
     try {
       const isHealthy = await vpnService.checkHealth();
       if (!isHealthy) {
+        // In development return SSHExecutor diagnostic when available to aid debugging
+        if (vpnService.accessMethod === 'ssh' && vpnService.executor && process.env.NODE_ENV !== 'production') {
+          const sshResult = await vpnService.executor.testConnection();
+          return res.status(400).json({
+            error: `Cannot connect to ${vpnType} server. SSH test failed: ${sshResult.error || 'unknown'}`,
+            debug: { ssh: sshResult },
+          });
+        }
+
         return res.status(400).json({
           error: `Cannot connect to ${vpnType} server. Please verify the connection details.`,
         });
