@@ -167,6 +167,24 @@ router.put(
     body('region').optional().isIn(['US', 'EU', 'ASIA', 'SOUTH_AMERICA', 'AFRICA', 'OCEANIA']),
     body('provider').optional().isIn(['AWS', 'Google Cloud', 'Azure', 'DigitalOcean', 'Linode', 'Custom']),
     body('serverType').optional().isIn(['REGULAR', 'PREMIUM', 'ENTERPRISE']),
+
+    // Allow optional SSH updates when admin edits server
+    body('sshHost')
+      .optional()
+      .isString()
+      .withMessage('SSH host must be a string'),
+    body('sshPort')
+      .optional()
+      .isInt({ min: 1, max: 65535 })
+      .withMessage('SSH port must be a valid port'),
+    body('sshUsername')
+      .optional()
+      .isString()
+      .withMessage('SSH username must be a string'),
+    body('sshPrivateKey')
+      .optional()
+      .isString()
+      .withMessage('SSH private key must be a string'),
   ],
   validateRequest,
   serverController.updateServer

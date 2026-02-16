@@ -1,10 +1,26 @@
 const { Client } = require('ssh2');
+const { decryptString } = require('./crypto');
 
 class SSHExecutor {
   constructor(server) {
     this.server = server;
-    // Prefer explicit ssh config for the service type, fall back to common locations
-    this.sshConfig = server.wireguard?.ssh || server.outline?.ssh || server.v2ray?.ssh || server.ssh || {};
+    // Prefer an SSH config that actually contains credentials (privateKey/password/host/username).
+    // Pick the first config that has usable authentication info; otherwise fall back to the first defined config.
+    const candidates = [server.v2ray?.ssh, server.outline?.ssh, server.wireguard?.ssh, server.ssh];
+    this.sshConfig = candidates.find(cfg => cfg && (cfg.privateKey || cfg.password || cfg.host || cfg.username))
+      || (server.v2ray?.ssh || server.outline?.ssh || server.wireguard?.ssh || server.ssh || {});
+
+    // If privateKey is stored encrypted (prefix ENC:), decrypt it now so ssh2 receives the raw key
+    if (this.sshConfig && this.sshConfig.privateKey && typeof this.sshConfig.privateKey === 'string') {
+      const keyVal = this.sshConfig.privateKey;
+      if (keyVal.startsWith('ENC:')) {
+        try {
+          this.sshConfig.privateKey = decryptString(keyVal.replace(/^ENC:/, ''));
+        } catch (e) {
+          // leave as-is; error will surface during connection attempt
+        }
+      }
+    }
   }
 
   /**

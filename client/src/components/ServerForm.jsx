@@ -36,7 +36,7 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
     v2rayApiToken: server?.v2ray?.apiToken || '',
     v2rayTlsVerify: server?.v2ray?.tlsVerify !== undefined ? server.v2ray.tlsVerify : true,
     v2rayAccessMethod: server?.v2ray?.accessMethod || 'api',
-    v2rayConfigPath: server?.v2ray?.configPath || '/etc/v2ray/config.json',
+    v2rayConfigPath: server?.v2ray?.configPath || '/usr/local/etc/v2ray/config.json',
 
     // SSH settings (shared for all types)
     sshHost: server?.wireguard?.ssh?.host || server?.outline?.ssh?.host || server?.v2ray?.ssh?.host || server?.host || '',
@@ -169,6 +169,69 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
     return Object.keys(errors).length === 0;
   };
 
+  const buildPayload = () => {
+    const base = {
+      name: formData.name,
+      description: formData.description,
+      host: formData.host,
+      port: formData.port,
+      vpnType: formData.vpnType,
+      serverType: formData.serverType,
+      region: formData.region,
+      country: formData.country,
+      city: formData.city,
+      provider: formData.provider,
+    };
+
+    // SSH helper fields (top-level names expected by API)
+    const sshFields = {
+      sshHost: formData.sshHost,
+      sshPort: formData.sshPort,
+      sshUsername: formData.sshUsername,
+      sshPassword: formData.sshPassword,
+      sshPrivateKey: formData.sshPrivateKey,
+    };
+
+    if (formData.vpnType === 'wireguard') {
+      return {
+        ...base,
+        wireguardInterfaceName: formData.wireguardInterfaceName,
+        wireguardVpnIpRange: formData.wireguardVpnIpRange,
+        wireguardPort: formData.wireguardPort,
+        serverPublicKey: formData.serverPublicKey,
+        wireguardAccessMethod: formData.wireguardAccessMethod,
+        ...(formData.wireguardAccessMethod === 'ssh' ? sshFields : {}),
+      };
+    }
+
+    if (formData.vpnType === 'outline') {
+      return {
+        ...base,
+        outlineApiPort: formData.outlineApiPort,
+        outlineAdminAccessKey: formData.outlineAdminAccessKey,
+        outlineAccessKeyPort: formData.outlineAccessKeyPort,
+        outlineCertSha256: formData.outlineCertSha256,
+        outlineAccessMethod: formData.outlineAccessMethod,
+        ...(formData.outlineAccessMethod === 'ssh' ? sshFields : {}),
+      };
+    }
+
+    if (formData.vpnType === 'v2ray') {
+      return {
+        ...base,
+        v2rayApiPort: formData.v2rayApiPort,
+        v2rayApiBaseUrl: formData.v2rayApiBaseUrl,
+        v2rayApiToken: formData.v2rayApiToken,
+        v2rayTlsVerify: formData.v2rayTlsVerify,
+        v2rayAccessMethod: formData.v2rayAccessMethod,
+        v2rayConfigPath: formData.v2rayConfigPath,
+        ...(formData.v2rayAccessMethod === 'ssh' ? sshFields : {}),
+      };
+    }
+
+    return base;
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError('');
@@ -177,10 +240,12 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
       return;
     }
 
+    const payload = buildPayload();
+
     setLoading(true);
 
     try {
-      await onSubmit(formData);
+      await onSubmit(payload);
     } catch (err) {
       setError(err.message || 'An error occurred');
     } finally {
@@ -517,6 +582,104 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
                   </button>
                 </div>
               )}
+
+              <div className="form-row">
+                <div className="form-group">
+                  <label htmlFor="outlineApiPort">Management API Port *</label>
+                  <input
+                    type="number"
+                    id="outlineApiPort"
+                    name="outlineApiPort"
+                    value={formData.outlineApiPort}
+                    onChange={handleChange}
+                    required
+                    placeholder="8081"
+                  />
+                  <small>Default: 8081</small>
+                  {formErrors.outlineApiPort && (
+                    <div className="error-message" style={{ marginTop: '6px' }}>
+                      {formErrors.outlineApiPort}
+                    </div>
+                  )}
+                </div>
+
+                <div className="form-group">
+                  <label htmlFor="outlineAccessKeyPort">Access Key Port *</label>
+                  <input
+                    type="number"
+                    id="outlineAccessKeyPort"
+                    name="outlineAccessKeyPort"
+                    value={formData.outlineAccessKeyPort}
+                    onChange={handleChange}
+                    required
+                    placeholder="8388"
+                  />
+                  <small>Default: 8388</small>
+                  {formErrors.outlineAccessKeyPort && (
+                    <div className="error-message" style={{ marginTop: '6px' }}>
+                      {formErrors.outlineAccessKeyPort}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="outlineAdminAccessKey">Admin Access Key *</label>
+                <input
+                  type="password"
+                  id="outlineAdminAccessKey"
+                  name="outlineAdminAccessKey"
+                  value={formData.outlineAdminAccessKey}
+                  onChange={handleChange}
+                  placeholder="Paste admin access key from Outline server"
+                  required={formData.outlineAccessMethod === 'api'}
+                />
+                <small>Get this from your Outline server management interface</small>
+                {formErrors.outlineAdminAccessKey && (
+                  <div className="error-message" style={{ marginTop: '6px' }}>
+                    {formErrors.outlineAdminAccessKey}
+                  </div>
+                )}
+              </div>
+
+              <div className="form-group">
+                <label htmlFor="outlineCertSha256">Certificate SHA256 (optional)</label>
+                <input
+                  type="text"
+                  id="outlineCertSha256"
+                  name="outlineCertSha256"
+                  value={formData.outlineCertSha256}
+                  onChange={handleChange}
+                  placeholder="Leave empty for self-signed certificates"
+                />
+              </div>
+
+              <h3>Outline Access Method</h3>
+              <div className="form-group">
+                <label>How should the panel access the Outline server? *</label>
+                <div className="radio-group">
+                  <label>
+                    <input
+                      type="radio"
+                      name="outlineAccessMethod"
+                      value="api"
+                      checked={formData.outlineAccessMethod === 'api'}
+                      onChange={handleChange}
+                    />
+                    <span>API (Direct API calls)</span>
+                  </label>
+                  <label>
+                    <input
+                      type="radio"
+                      name="outlineAccessMethod"
+                      value="ssh"
+                      checked={formData.outlineAccessMethod === 'ssh'}
+                      onChange={handleChange}
+                    />
+                    <span>SSH (Remote server via SSH)</span>
+                  </label>
+                </div>
+              </div>
             </>
           )}
 
@@ -524,6 +687,22 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
           {formData.vpnType === 'v2ray' && (
             <>
               <h3>V2Ray (VMess) Server Settings</h3>
+
+              <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', marginBottom: '0.75rem' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <input
+                    type="checkbox"
+                    checked={formData.v2rayAccessMethod === 'ssh'}
+                    onChange={(e) => {
+                      const val = e.target.checked ? 'ssh' : 'api';
+                      setFormData((prev) => ({ ...prev, v2rayAccessMethod: val }));
+                      setFormErrors((prev) => ({ ...prev, sshHost: undefined, sshUsername: undefined, sshPrivateKey: undefined }));
+                    }}
+                  />
+                  <strong>Manage server via SSH</strong>
+                </label>
+                <small style={{ color: '#6b7280' }}>Enable to provide SSH credentials instead of using the management API</small>
+              </div>
 
               <div className="form-row">
                 <div className="form-group">
@@ -578,7 +757,7 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
                     name="v2rayConfigPath"
                     value={formData.v2rayConfigPath}
                     onChange={handleChange}
-                    placeholder="/etc/v2ray/config.json"
+                    placeholder="/usr/local/etc/v2ray/config.json"
                   />
                 </div>
               </div>
@@ -629,104 +808,6 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
             </>
           )}
 
-          <div className="form-row">
-            <div className="form-group">
-              <label htmlFor="outlineApiPort">Management API Port *</label>
-              <input
-                type="number"
-                id="outlineApiPort"
-                name="outlineApiPort"
-                value={formData.outlineApiPort}
-                onChange={handleChange}
-                required
-                placeholder="8081"
-              />
-              <small>Default: 8081</small>
-              {formErrors.outlineApiPort && (
-                <div className="error-message" style={{ marginTop: '6px' }}>
-                  {formErrors.outlineApiPort}
-                </div>
-              )}
-            </div>
-
-            <div className="form-group">
-              <label htmlFor="outlineAccessKeyPort">Access Key Port *</label>
-              <input
-                type="number"
-                id="outlineAccessKeyPort"
-                name="outlineAccessKeyPort"
-                value={formData.outlineAccessKeyPort}
-                onChange={handleChange}
-                required
-                placeholder="8388"
-              />
-              <small>Default: 8388</small>
-              {formErrors.outlineAccessKeyPort && (
-                <div className="error-message" style={{ marginTop: '6px' }}>
-                  {formErrors.outlineAccessKeyPort}
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="form-group">
-            <label htmlFor="outlineAdminAccessKey">Admin Access Key *</label>
-            <input
-              type="password"
-              id="outlineAdminAccessKey"
-              name="outlineAdminAccessKey"
-              value={formData.outlineAdminAccessKey}
-              onChange={handleChange}
-              placeholder="Paste admin access key from Outline server"
-              required={formData.outlineAccessMethod === 'api'}
-            />
-            <small>Get this from your Outline server management interface</small>
-            {formErrors.outlineAdminAccessKey && (
-              <div className="error-message" style={{ marginTop: '6px' }}>
-                {formErrors.outlineAdminAccessKey}
-              </div>
-            )}
-          </div>
-
-          <div className="form-group">
-            <label htmlFor="outlineCertSha256">Certificate SHA256 (optional)</label>
-            <input
-              type="text"
-              id="outlineCertSha256"
-              name="outlineCertSha256"
-              value={formData.outlineCertSha256}
-              onChange={handleChange}
-              placeholder="Leave empty for self-signed certificates"
-            />
-          </div>
-
-          <h3>Outline Access Method</h3>
-          <div className="form-group">
-            <label>How should the panel access the Outline server? *</label>
-            <div className="radio-group">
-              <label>
-                <input
-                  type="radio"
-                  name="outlineAccessMethod"
-                  value="api"
-                  checked={formData.outlineAccessMethod === 'api'}
-                  onChange={handleChange}
-                />
-                <span>API (Direct API calls)</span>
-              </label>
-              <label>
-                <input
-                  type="radio"
-                  name="outlineAccessMethod"
-                  value="ssh"
-                  checked={formData.outlineAccessMethod === 'ssh'}
-                  onChange={handleChange}
-                />
-                <span>SSH (Remote server via SSH)</span>
-              </label>
-            </div>
-          </div>
-
           {/* SSH settings (shared, shown if using SSH access) */}
           {((formData.vpnType === 'wireguard' && formData.wireguardAccessMethod === 'ssh') ||
             (formData.vpnType === 'outline' && formData.outlineAccessMethod === 'ssh') ||
@@ -750,8 +831,6 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
                       {formErrors.sshHost}
                     </div>
                   )}
-                    placeholder="22"
-                  />
                   {formErrors.sshPort && (
                     <div className="error-message" style={{ marginTop: '6px' }}>
                       {formErrors.sshPort}

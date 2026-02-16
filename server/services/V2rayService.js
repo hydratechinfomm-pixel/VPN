@@ -120,7 +120,26 @@ class V2rayService extends VpnService {
         const out = await this.executor.executeCommand(cmd);
         try { return JSON.parse(out); } catch (e) { return { success: true, userId: out.trim(), clientConfig: out.trim() }; }
       } catch (err) {
-        throw new Error(`Failed to add v2ray user via SSH: ${err.message}`);
+        const errMsg = err && err.message ? err.message : String(err);
+
+        // If failure is caused by permission issues writing to /etc/default/v2ray-cli,
+        // try a sudo-prefixed fallback (useful when helper requires root).
+        if (/permission denied|\/etc\/default\/v2ray-cli/i.test(errMsg)) {
+          try {
+            // attempt passwordless sudo; if sudo requires a password this will fail quickly
+            const sudoCmd = `sudo ${cmd}`;
+            const out2 = await this.executor.executeCommand(sudoCmd);
+            try { return JSON.parse(out2); } catch (e) { return { success: true, userId: out2.trim(), clientConfig: out2.trim(), usedSudo: true }; }
+          } catch (err2) {
+            const sudoErr = err2 && err2.message ? err2.message : String(err2);
+            if (/password is required|sorry, user .* is not allowed to run sudo|no tty present/i.test(sudoErr)) {
+              throw new Error(`Remote v2ray-cli requires root privileges and sudo is not available/passwordless. Sudo attempt failed: ${sudoErr}`);
+            }
+            throw new Error(`Failed to add v2ray user via SSH (attempted sudo): ${sudoErr}`);
+          }
+        }
+
+        throw new Error(`Failed to add v2ray user via SSH: ${errMsg}`);
       }
     }
 

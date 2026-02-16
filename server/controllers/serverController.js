@@ -246,13 +246,34 @@ exports.createServer = async (req, res) => {
     try {
       const isHealthy = await vpnService.checkHealth();
       if (!isHealthy) {
-        // In development return SSHExecutor diagnostic when available to aid debugging
-        if (vpnService.accessMethod === 'ssh' && vpnService.executor && process.env.NODE_ENV !== 'production') {
+        // If SSH access was selected, request a diagnostic from the SSH executor (if available)
+        if (vpnService.accessMethod === 'ssh' && vpnService.executor) {
           const sshResult = await vpnService.executor.testConnection();
-          return res.status(400).json({
-            error: `Cannot connect to ${vpnType} server. SSH test failed: ${sshResult.error || 'unknown'}`,
-            debug: { ssh: sshResult },
-          });
+
+          // Special-case: allow saving the server when the only failure is an unsupported
+          // private key format (user may want to save first and fix the key later).
+          const isUnsupportedKeyFormat = sshResult && sshResult.error && /Unsupported key format|Cannot parse privateKey/i.test(sshResult.error);
+          if (isUnsupportedKeyFormat) {
+            // Mark server unhealthy but persist it so user can update the key later
+            server.stats.isHealthy = false;
+            await server.save();
+            await logActivity(req.userId, 'ADD_SERVER', 'SERVER', server._id, true);
+
+            return res.status(201).json({
+              message: `${vpnType.toUpperCase()} server created (SSH test reported unsupported private key format)` ,
+              server,
+              warning: `SSH test failed: ${sshResult.error}. Server saved — update the SSH key and re-run health-check.`,
+              debug: { ssh: sshResult },
+            });
+          }
+
+          // In development return SSHExecutor diagnostic when available to aid debugging
+          if (process.env.NODE_ENV !== 'production') {
+            return res.status(400).json({
+              error: `Cannot connect to ${vpnType} server. SSH test failed: ${sshResult.error || 'unknown'}`,
+              debug: { ssh: sshResult },
+            });
+          }
         }
 
         return res.status(400).json({
@@ -313,7 +334,21 @@ exports.getServer = async (req, res) => {
 exports.updateServer = async (req, res) => {
   try {
     const { serverId } = req.params;
-    const { name, description, serverType, region, country, city, provider } = req.body;
+    const {
+      name,
+      description,
+      serverType,
+      region,
+      country,
+      city,
+      provider,
+      // optional SSH fields for updates
+      sshHost,
+      sshPort,
+      sshUsername,
+      sshPassword,
+      sshPrivateKey,
+    } = req.body;
 
     const server = await VpnServer.findById(serverId)
       .select('+outline.adminAccessKey +outline.ssh.privateKey +v2ray.ssh.privateKey');
@@ -329,12 +364,47 @@ exports.updateServer = async (req, res) => {
     if (provider) server.provider = provider;
     if (serverType) server.serverType = serverType;
 
+    // If SSH credentials were provided, update the appropriate ssh block depending on vpnType
+    if (sshHost || sshPort || sshUsername || sshPassword || sshPrivateKey) {
+      const sshUpdate = {};
+      if (sshHost) sshUpdate.host = sshHost;
+      if (sshPort) sshUpdate.port = sshPort;
+      if (sshUsername) sshUpdate.username = sshUsername;
+      if (sshPassword) sshUpdate.password = sshPassword;
+      if (sshPrivateKey) sshUpdate.privateKey = sshPrivateKey;
+
+      if (server.vpnType === 'wireguard') {
+        server.wireguard = server.wireguard || {};
+        server.wireguard.ssh = { ...(server.wireguard.ssh || {}), ...sshUpdate };
+      } else if (server.vpnType === 'outline') {
+        server.outline = server.outline || {};
+        server.outline.ssh = { ...(server.outline.ssh || {}), ...sshUpdate };
+      } else if (server.vpnType === 'v2ray') {
+        server.v2ray = server.v2ray || {};
+        server.v2ray.ssh = { ...(server.v2ray.ssh || {}), ...sshUpdate };
+      }
+    }
+
     await server.save();
+
+    // After applying new SSH credentials, re-run a health check for convenience
+    const vpnService = getVpnService(server);
+    let health = null;
+    try {
+      health = await vpnService.checkHealth();
+      server.stats.isHealthy = !!health;
+      server.stats.lastHealthCheck = new Date();
+      await server.save();
+    } catch (e) {
+      // ignore — return server with whatever health we could obtain
+    }
+
     await logActivity(req.userId, 'UPDATE_SERVER', 'SERVER', server._id, true);
 
     res.json({
       message: 'Server updated successfully',
       server,
+      health: health === null ? undefined : { isHealthy: !!health, lastCheck: server.stats.lastHealthCheck },
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
