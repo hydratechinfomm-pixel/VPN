@@ -175,7 +175,7 @@ const vpnServerSchema = new mongoose.Schema(
       // Path to v2ray config for SSH editing
       configPath: {
         type: String,
-        default: '/etc/v2ray/config.json',
+        default: '/usr/local/etc/v2ray/config.json',
       },
       // Default inbound port
       inboundsPort: Number,
