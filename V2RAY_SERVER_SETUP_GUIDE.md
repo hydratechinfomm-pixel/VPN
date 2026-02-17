@@ -154,3 +154,9 @@ Click the **"Docs"** button in the V2Ray Server form to see:
 - Helper script installation steps
 
 All in one convenient modal!
+
+
+# when device add show password requird, this fixed
+echo "paneluser ALL=(ALL) NOPASSWD: /usr/local/bin/v2ray-cli, /bin/systemctl, /usr/bin/tee, /bin/cat" | sudo tee /etc/sudoers.d/paneluser-v2ray > /dev/null
+sudo chmod 440 /etc/sudoers.d/paneluser-v2ray
+sudo visudo -c

@@ -31,9 +31,9 @@ PersistentKeepalive = 25
    * Normalize / override host inside a VMess clientConfig (vmess:// or JSON)
    * - If server.v2ray.publicHost is present, replace `add` and `host` fields
    */
-  static normalizeVmessClientConfig(clientConfig, server) {
+  static normalizeVmessClientConfig(clientConfig, server, deviceName) {
     const publicHost = server?.v2ray?.publicHost;
-    if (!publicHost || !clientConfig) return clientConfig;
+    if (!clientConfig || (!publicHost && !deviceName)) return clientConfig;
 
     // vmess://<base64-json>
     if (String(clientConfig).trim().startsWith('vmess://')) {
@@ -41,8 +41,13 @@ PersistentKeepalive = 25
         const b64 = String(clientConfig).trim().replace(/^vmess:\/\//, '');
         const json = Buffer.from(b64, 'base64').toString('utf8');
         const obj = JSON.parse(json);
-        obj.add = publicHost;
-        obj.host = publicHost;
+        if (publicHost) {
+          obj.add = publicHost;
+          obj.host = publicHost;
+        }
+        if (deviceName) {
+          obj.ps = deviceName;
+        }
         return `vmess://${Buffer.from(JSON.stringify(obj)).toString('base64')}`;
       } catch (e) {
         return clientConfig;
@@ -53,8 +58,13 @@ PersistentKeepalive = 25
     try {
       const parsed = JSON.parse(String(clientConfig));
       if (parsed && parsed.add) {
-        parsed.add = publicHost;
-        parsed.host = publicHost;
+        if (publicHost) {
+          parsed.add = publicHost;
+          parsed.host = publicHost;
+        }
+        if (deviceName) {
+          parsed.ps = deviceName;
+        }
         return `vmess://${Buffer.from(JSON.stringify(parsed)).toString('base64')}`;
       }
       return clientConfig;
@@ -73,7 +83,7 @@ PersistentKeepalive = 25
     if (device?.configFile) {
       const cfg = String(device.configFile).trim();
       if (cfg.startsWith('vmess://')) {
-        return server?.v2ray?.publicHost ? ConfigGenerator.normalizeVmessClientConfig(cfg, server) : cfg;
+        return ConfigGenerator.normalizeVmessClientConfig(cfg, server, device?.name);
       }
       try {
         const parsed = JSON.parse(cfg);
@@ -94,7 +104,7 @@ PersistentKeepalive = 25
     if (v2user && v2user.clientConfig) {
       const cfg = String(v2user.clientConfig).trim();
       if (cfg.startsWith('vmess://')) {
-        return server?.v2ray?.publicHost ? ConfigGenerator.normalizeVmessClientConfig(cfg, server) : cfg;
+        return ConfigGenerator.normalizeVmessClientConfig(cfg, server, device?.name);
       }
       try {
         const parsed = JSON.parse(cfg);

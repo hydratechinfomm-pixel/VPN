@@ -47,7 +47,8 @@ class SSHExecutor {
       }
 
       conn.on('ready', () => {
-        conn.exec(command, (err, stream) => {
+        const finalCommand = this.wrapSudoCommand(command);
+        conn.exec(finalCommand, (err, stream) => {
           if (err) {
             conn.end();
             return reject(err);
@@ -80,6 +81,19 @@ class SSHExecutor {
 
       conn.connect(config);
     });
+  }
+
+  wrapSudoCommand(command) {
+    const trimmed = String(command || '').trim();
+    if (!trimmed.startsWith('sudo ')) return command;
+
+    if (this.sshConfig && this.sshConfig.password) {
+      const escaped = String(this.sshConfig.password).replace(/'/g, `'"'"'`);
+      const sudoPart = trimmed.replace(/^sudo\s+/, 'sudo -S -p "" ');
+      return `printf '%s\n' '${escaped}' | ${sudoPart}`;
+    }
+
+    return command;
   }
 
   /**

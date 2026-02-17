@@ -151,7 +151,11 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
         if (!formData.sshHost) errors.sshHost = 'SSH host is required';
         if (!formData.sshPort) errors.sshPort = 'SSH port is required';
         if (!formData.sshUsername) errors.sshUsername = 'SSH username is required';
-        if (!formData.sshPassword && !formData.sshPrivateKey) {
+        // Only require password/key if creating or if user changed SSH host/username/port or filled one of the fields
+        const isNew = !server;
+        const sshFieldsChanged = isNew || formData.sshHost !== (server?.v2ray?.ssh?.host || server?.host) || formData.sshPort !== (server?.v2ray?.ssh?.port || 22) || formData.sshUsername !== (server?.v2ray?.ssh?.username || '');
+        const anyCredentialFilled = formData.sshPassword || formData.sshPrivateKey;
+        if ((isNew || sshFieldsChanged || anyCredentialFilled) && !formData.sshPassword && !formData.sshPrivateKey) {
           errors.sshPrivateKey = 'Provide SSH password or private key';
         }
       }

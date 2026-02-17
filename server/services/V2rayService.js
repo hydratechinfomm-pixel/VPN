@@ -118,7 +118,9 @@ class V2rayService extends VpnService {
       const cmd = `v2ray-cli add-user --name "${name || 'user'}" ${limit ? `--limit ${limit}` : ''} ${expiresAt ? `--expires "${expiresAt}"` : ''}`;
       try {
         const out = await this.executor.executeCommand(cmd);
-        try { return JSON.parse(out); } catch (e) { return { success: true, userId: out.trim(), clientConfig: out.trim() }; }
+        const parsed = this.parseV2rayCliOutput(out);
+        const ensured = await this.ensureUserInConfig(parsed.userId, name);
+        return { ...parsed, ensuredInConfig: ensured }; 
       } catch (err) {
         const errMsg = err && err.message ? err.message : String(err);
 
@@ -129,11 +131,23 @@ class V2rayService extends VpnService {
             // attempt passwordless sudo; if sudo requires a password this will fail quickly
             const sudoCmd = `sudo ${cmd}`;
             const out2 = await this.executor.executeCommand(sudoCmd);
-            try { return JSON.parse(out2); } catch (e) { return { success: true, userId: out2.trim(), clientConfig: out2.trim(), usedSudo: true }; }
+            const parsed2 = this.parseV2rayCliOutput(out2);
+            const ensured2 = await this.ensureUserInConfig(parsed2.userId, name);
+            return { ...parsed2, usedSudo: true, ensuredInConfig: ensured2 };
           } catch (err2) {
             const sudoErr = err2 && err2.message ? err2.message : String(err2);
-            if (/password is required|sorry, user .* is not allowed to run sudo|no tty present/i.test(sudoErr)) {
-              throw new Error(`Remote v2ray-cli requires root privileges and sudo is not available/passwordless. Sudo attempt failed: ${sudoErr}`);
+            const sudoNeedsPassword = /password is required|a terminal is required|no tty present/i.test(sudoErr);
+            if (/sorry, user .* is not allowed to run sudo/i.test(sudoErr)) {
+              throw new Error(`Remote v2ray-cli requires root privileges but sudo is not permitted for this user. Configure NOPASSWD for v2ray-cli/systemctl or use a sudo-enabled account.`);
+            }
+            if (sudoNeedsPassword) {
+              const hasSshPassword = !!(this.executor && this.executor.sshConfig && this.executor.sshConfig.password);
+              if (!hasSshPassword) {
+                throw new Error(
+                  'Remote v2ray-cli requires sudo but no SSH password was provided. Update the server with an SSH password or configure passwordless sudo for v2ray-cli and systemctl.'
+                );
+              }
+              throw new Error(`Remote v2ray-cli requires root privileges and sudo password was rejected. Sudo attempt failed: ${sudoErr}`);
             }
             throw new Error(`Failed to add v2ray user via SSH (attempted sudo): ${sudoErr}`);
           }
@@ -159,6 +173,119 @@ class V2rayService extends VpnService {
     } catch (err) {
       throw new Error(`Failed to add v2ray user via API: ${err.message}`);
     }
+  }
+
+  parseV2rayCliOutput(output) {
+    try {
+      const json = JSON.parse(output);
+      return {
+        success: true,
+        userId: json.id || json.userId,
+        clientConfig: json.clientConfig || json.vmess || json.accessUrl || JSON.stringify(json),
+        dataLimit: json.dataLimit || null,
+      };
+    } catch (e) {
+      return { success: true, userId: String(output).trim(), clientConfig: String(output).trim() };
+    }
+  }
+
+  async ensureUserInConfig(userId, name) {
+    if (!userId) return { changed: false, reason: 'missing-user-id' };
+    const configPaths = await this.resolveRemoteConfigPaths();
+    if (!configPaths.length) throw new Error('Unable to locate V2Ray/Xray config.json on remote host');
+
+    let lastError = null;
+    for (const configPath of configPaths) {
+      const configContent = await this.readRemoteFile(configPath);
+      let config;
+      try {
+        config = JSON.parse(configContent);
+      } catch (e) {
+        lastError = `Failed to parse remote config JSON at ${configPath}: ${e.message}`;
+        continue;
+      }
+
+      const inbound = Array.isArray(config.inbounds)
+        ? config.inbounds.find((inb) => inb?.protocol === 'vmess' || Array.isArray(inb?.settings?.clients))
+        : null;
+
+      if (!inbound || !inbound.settings) {
+        lastError = `No VMess inbound found in config at ${configPath}`;
+        continue;
+      }
+
+      inbound.settings.clients = Array.isArray(inbound.settings.clients) ? inbound.settings.clients : [];
+
+      const exists = inbound.settings.clients.some((c) => c && String(c.id) === String(userId));
+      if (exists) return { changed: false, reason: 'already-exists', configPath };
+
+      inbound.settings.clients.push({
+        id: String(userId),
+        alterId: 0,
+        email: name || `device-${String(userId).slice(0, 8)}`,
+      });
+
+      const updated = JSON.stringify(config, null, 2);
+      await this.writeRemoteFile(configPath, updated);
+      await this.restartRemoteService(configPath);
+
+      return { changed: true, configPath };
+    }
+
+    throw new Error(lastError || 'No VMess inbound found in any config; cannot add user');
+  }
+
+  async resolveRemoteConfigPaths() {
+    const candidates = [
+      this.v2ray?.configPath,
+      '/usr/local/etc/xray/config.json',
+      '/usr/local/etc/v2ray/config.json',
+      '/etc/v2ray/config.json',
+    ].filter(Boolean);
+
+    const seen = new Set();
+    const existing = [];
+
+    for (const path of candidates) {
+      if (seen.has(path)) continue;
+      seen.add(path);
+      const cmd = `if [ -f ${path} ]; then echo ${path}; fi`;
+      try {
+        const out = await this.executor.executeCommand(cmd);
+        if (out.trim()) existing.push(out.trim());
+      } catch (e) {
+        try {
+          const out2 = await this.executor.executeCommand(`sudo sh -c '${cmd}'`);
+          if (out2.trim()) existing.push(out2.trim());
+        } catch (err2) {
+          // ignore
+        }
+      }
+    }
+
+    return existing;
+  }
+
+  async readRemoteFile(path) {
+    try {
+      return await this.executor.executeCommand(`cat ${path}`);
+    } catch (e) {
+      return await this.executor.executeCommand(`sudo cat ${path}`);
+    }
+  }
+
+  async writeRemoteFile(path, content) {
+    const b64 = Buffer.from(content, 'utf8').toString('base64');
+    const cmd = `echo ${b64} | base64 -d | sudo tee ${path} > /dev/null`;
+    await this.executor.executeCommand(cmd);
+  }
+
+  async restartRemoteService(configPath) {
+    const preferXray = configPath.includes('/xray/');
+    const restartCmd = preferXray
+      ? 'sudo systemctl restart xray || sudo systemctl restart v2ray'
+      : 'sudo systemctl restart v2ray || sudo systemctl restart xray';
+    await this.executor.executeCommand(restartCmd);
   }
 
   async removeUser(userId) {
@@ -204,19 +331,99 @@ class V2rayService extends VpnService {
     if (!userId) throw new Error('User id required');
     if (this.accessMethod === 'ssh') {
       const cmd = `v2ray-cli stats ${userId}`;
+      let helperOut = null;
       try {
-        const out = await this.executor.executeCommand(cmd);
-        try { return JSON.parse(out); } catch (e) { return { bytesUsed: Number(out) || 0 }; }
+        helperOut = await this.executor.executeCommand(cmd);
       } catch (err) {
-        throw new Error(`Failed to get v2ray user stats via SSH: ${err.message}`);
+        // ignore, we'll try API fallback below
       }
+
+      // If helper produced output, try to interpret it
+      if (helperOut) {
+        try {
+          const parsedOut = JSON.parse(helperOut);
+          if (parsedOut && ((typeof parsedOut.bytesUsed === 'number' && parsedOut.bytesUsed > 0) || parsedOut.uplink || parsedOut.downlink)) return parsedOut;
+          // otherwise ignore and fall through to API fallback
+        } catch (e) {
+          const numeric = Number(helperOut) || 0;
+          if (numeric > 0) return { bytesUsed: numeric };
+        }
+      }
+
+      // SSH fallback: query the local xray/v2ray management API via SSH and parse stat entries
+      try {
+        // First try exact pattern
+        const apiCmd = `xray api statsquery -pattern "user>>>${userId}>>>traffic"`;
+        const out2 = await this.executor.executeCommand(apiCmd);
+        try {
+          const parsed = JSON.parse(out2);
+          if (Array.isArray(parsed.stat) && parsed.stat.length) {
+            let uplink = 0;
+            let downlink = 0;
+            for (const s of parsed.stat) {
+              if (!s || !s.name) continue;
+              if (s.name.endsWith('uplink')) uplink = Number(s.value) || 0;
+              if (s.name.endsWith('downlink')) downlink = Number(s.value) || 0;
+            }
+            const total = uplink + downlink;
+            return { userId, bytesUsed: total, uplink, downlink };
+          }
+        } catch (e2) {
+          // ignore parse error and continue to broader query
+        }
+
+        // If specific pattern returned nothing, request all stats and search for matching entries
+        try {
+          const outAll = await this.executor.executeCommand('xray api statsquery -pattern ""');
+          const parsedAll = JSON.parse(outAll);
+          if (Array.isArray(parsedAll.stat)) {
+            let uplink = 0;
+            let downlink = 0;
+            for (const s of parsedAll.stat) {
+              if (!s || !s.name) continue;
+              if (s.name.includes(`user>>>${userId}>>>traffic`) ) {
+                if (s.name.endsWith('uplink')) uplink = Number(s.value) || 0;
+                if (s.name.endsWith('downlink')) downlink = Number(s.value) || 0;
+              }
+            }
+            const total = uplink + downlink;
+            if (total > 0) return { userId, bytesUsed: total, uplink, downlink };
+          }
+        } catch (e3) {
+          // ignore and throw below
+        }
+      } catch (err2) {
+        // ignore and throw below with diagnostics
+      }
+
+      throw new Error(`Failed to get v2ray user stats via SSH for ${userId}`);
     }
 
     try {
       const resp = await this.makeRequest('GET', `metrics/transfer`);
-      // Expect resp.bytesTransferredByUserId[userId]
-      const bytes = resp?.bytesTransferredByUserId?.[userId] || 0;
-      return { userId, bytesUsed: bytes };
+      // Common API shapes:
+      // 1) { bytesTransferredByUserId: { [userId]: N } }
+      // 2) { stat: [ { name: 'user>>><id>>>traffic>>>uplink', value: N }, ... ] }
+      const bytesFromMap = resp?.bytesTransferredByUserId?.[userId];
+      if (typeof bytesFromMap === 'number') return { userId, bytesUsed: bytesFromMap };
+
+      // Fallback: parse stat array entries (as returned by xray's statsquery)
+      if (Array.isArray(resp?.stat)) {
+        const patternUplink = `user>>>${userId}>>>traffic>>>uplink`;
+        const patternDown = `user>>>${userId}>>>traffic>>>downlink`;
+        let uplink = 0;
+        let downlink = 0;
+        for (const s of resp.stat) {
+          if (!s || !s.name) continue;
+          if (s.name === patternUplink) uplink = Number(s.value) || 0;
+          if (s.name === patternDown) downlink = Number(s.value) || 0;
+        }
+        const total = uplink + downlink;
+        return { userId, bytesUsed: total, uplink, downlink };
+      }
+
+      // Nothing matched; return zero
+      return { userId, bytesUsed: 0 };
     } catch (err) {
       throw new Error(`Failed to get v2ray user stats via API: ${err.message}`);
     }

@@ -1,4 +1,4 @@
-import React, { useState, useContext } from 'react';
+import React, { useState, useEffect, useContext } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { devicesAPI } from '../api';
 import { AuthContext } from '../context/AuthContext';
@@ -12,6 +12,38 @@ const DeviceList = ({ devices, onEdit, onDelete, onDownloadConfig, onMigrate }) 
   const [showQR, setShowQR] = useState(false);
   const [qrData, setQrData] = useState(null);
   const [showHistory, setShowHistory] = useState(false);
+  const [loadingStats, setLoadingStats] = useState({});
+  const [localDevices, setLocalDevices] = useState(devices || []);
+
+  // Sync prop changes into local state
+  useEffect(() => {
+    setLocalDevices(devices || []);
+  }, [devices]);
+
+  // Auto-fetch per-device stats for V2Ray devices that show zero usage
+  useEffect(() => {
+    const fetchMissingStats = async () => {
+      for (const d of localDevices) {
+        const totalUsage = d.totalBytesUsed || ((d.usage?.bytesSent || 0) + (d.usage?.bytesReceived || 0));
+        if (d.server?.vpnType === 'v2ray' && (!totalUsage || totalUsage === 0) && !loadingStats[d._id]) {
+          setLoadingStats(prev => ({ ...prev, [d._id]: true }));
+          try {
+            const resp = await devicesAPI.getStats(d._id);
+            const s = resp?.stats || resp;
+            const bytes = s?.bytesUsed ?? (s?.uplink && s?.downlink ? (s.uplink + s.downlink) : 0);
+            setLocalDevices(prev => prev.map(x => x._id === d._id ? { ...x, usage: { bytesSent: s?.uplink || 0, bytesReceived: s?.downlink || bytes }, totalBytesUsed: bytes } : x));
+          } catch (err) {
+            // ignore per-device fetch errors
+          } finally {
+            setLoadingStats(prev => ({ ...prev, [d._id]: false }));
+          }
+        }
+      }
+    };
+
+    if (localDevices && localDevices.length) fetchMissingStats();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [localDevices]);
 
   const formatBytes = (bytes) => {
     if (!bytes || bytes === 0) return '0 B';
@@ -110,7 +142,7 @@ const DeviceList = ({ devices, onEdit, onDelete, onDownloadConfig, onMigrate }) 
   // Check if user is admin
   const isAdmin = user && (user.role == 'admin');
 
-  if (devices.length === 0) {
+  if ((localDevices || []).length === 0) {
     return <div className="empty-state">No devices found</div>;
   }
 
@@ -132,7 +164,7 @@ const DeviceList = ({ devices, onEdit, onDelete, onDownloadConfig, onMigrate }) 
             </tr>
           </thead>
           <tbody>
-            {devices.map((device) => {
+            {localDevices.map((device) => {
               // For Outline devices, use totalBytesUsed if available, otherwise sum sent+received
               const totalUsage = device.totalBytesUsed || 
                                  ((device.usage?.bytesSent || 0) + (device.usage?.bytesReceived || 0));
@@ -364,6 +396,7 @@ const DeviceList = ({ devices, onEdit, onDelete, onDownloadConfig, onMigrate }) 
                               🔌
                             </button>
                           )}
+                          
                           <button
                             className="btn-icon btn-danger"
                             onClick={() => onDelete(device._id)}

@@ -13,6 +13,8 @@ router.get('/history', authorizePanelAdmin, deviceHistoryController.getAllHistor
 // Device CRUD
 router.post('/', deviceController.createDevice);
 router.get('/', deviceController.getDevices);
+// Get per-device network stats
+router.get('/:deviceId/stats', deviceController.getDeviceStats);
 router.get('/:deviceId', deviceController.getDevice);
 router.put('/:deviceId', authorizePanelAdmin, deviceController.updateDevice);
 router.post('/:deviceId/migrate', authorizePanelAdmin, deviceController.migrateDevice); // Outline-only device migration (admin only)

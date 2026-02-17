@@ -10,6 +10,7 @@ const mongoose = require('mongoose');
 const WireGuardService = require('../services/WireGuardService');
 const OutlineService = require('../services/OutlineService');
 const V2rayService = require('../services/V2rayService');
+const SSHExecutor = require('../utils/SSHExecutor');
 const ConfigGenerator = require('../utils/ConfigGenerator');
 const { logActivity } = require('../middleware/auth');
 
@@ -374,9 +375,13 @@ async function createV2rayDevice(req, res, server, vpnService, requesterId, devi
 
     // If admin configured a publicHost for this server, normalize/override the
     // helper-returned clientConfig so clients receive the advertised domain.
-    if (server?.v2ray?.publicHost && v2rayData?.clientConfig) {
+    if (v2rayData?.clientConfig) {
       try {
-        v2rayData.clientConfig = require('../utils/ConfigGenerator').normalizeVmessClientConfig(v2rayData.clientConfig, server);
+        v2rayData.clientConfig = require('../utils/ConfigGenerator').normalizeVmessClientConfig(
+          v2rayData.clientConfig,
+          server,
+          name || v2rayData.name
+        );
       } catch (e) {
         console.warn('[createV2rayDevice] Failed to normalize clientConfig host:', e.message);
       }
@@ -519,6 +524,7 @@ exports.getDevices = async (req, res) => {
       .populate('server', 'name host region vpnType')
       .populate('plan', 'name dataLimit')
       .populate('accessKey', 'accessKeyId accessUrl name')
+      .populate('v2rayUser', 'userId name')
       .sort({ createdAt: -1 });
 
     // For Outline devices without accessKey set, try to find and link them
@@ -536,6 +542,14 @@ exports.getDevices = async (req, res) => {
           console.log(`[getDevices] Linked accessKey to device ${device.name}`);
         }
       }
+      if (device.server?.vpnType === 'v2ray' && !device.v2rayUser) {
+        const v2rayUser = await V2rayUser.findOne({ device: device._id });
+        if (v2rayUser) {
+          device.v2rayUser = v2rayUser;
+          await device.save();
+          console.log(`[getDevices] Linked v2rayUser to device ${device.name}`);
+        }
+      }
     }
 
     // Refresh devices after potential linking
@@ -543,6 +557,7 @@ exports.getDevices = async (req, res) => {
       .populate('server', 'name host region vpnType')
       .populate('plan', 'name dataLimit')
       .populate('accessKey', 'accessKeyId accessUrl name')
+      .populate('v2rayUser', 'userId name')
       .sort({ createdAt: -1 });
 
     // For each Outline device, fetch usage from server
@@ -582,6 +597,42 @@ exports.getDevices = async (req, res) => {
           }
         } else if (device.server?.vpnType === 'outline') {
           console.warn(`[getDevices] Outline device ${device.name} missing accessKey:`, device.accessKey);
+        } else if (device.server?.vpnType === 'v2ray' && device.v2rayUser?.userId) {
+          try {
+            console.log(`[getDevices] Fetching usage for V2Ray device ${device.name}, userId: ${device.v2rayUser.userId}`);
+
+            const server = await VpnServer.findById(device.server._id)
+              .select('+outline.adminAccessKey +outline.ssh.privateKey +v2ray.ssh.privateKey');
+
+            if (server) {
+              const vpnService = getVpnService(server);
+              let stats = await vpnService.getUserStats(device.v2rayUser.userId);
+              let bytesUsed = stats?.bytesUsed || 0;
+              // If zero, try using v2rayUser.name which some Xray installs use in stats labels
+              if ((!bytesUsed || bytesUsed === 0) && device.v2rayUser?.name) {
+                try {
+                  const alt = await vpnService.getUserStats(device.v2rayUser.name);
+                  if (alt?.bytesUsed && alt.bytesUsed > bytesUsed) {
+                    stats = alt;
+                    bytesUsed = alt.bytesUsed;
+                  }
+                } catch (e) {
+                  // ignore alt lookup errors
+                }
+              }
+
+              deviceObj.usage = {
+                bytesSent: 0,
+                bytesReceived: bytesUsed,
+                lastSync: new Date(),
+              };
+              deviceObj.totalBytesUsed = bytesUsed;
+            }
+          } catch (err) {
+            console.error(`[getDevices] Failed to fetch usage for V2Ray device ${device._id}:`, err.message);
+          }
+        } else if (device.server?.vpnType === 'v2ray') {
+          console.warn(`[getDevices] V2Ray device ${device.name} missing v2rayUser:`, device.v2rayUser);
         }
         
         // Add limit source info for clarity
@@ -632,6 +683,136 @@ exports.getDevice = async (req, res) => {
     res.json(device);
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+};
+
+/**
+ * Get per-device network stats (V2Ray / Outline / WireGuard)
+ */
+exports.getDeviceStats = async (req, res) => {
+  try {
+    const { deviceId } = req.params;
+    const userId = req.userId;
+
+    const device = await Device.findById(deviceId).populate('server').populate('v2rayUser').populate('accessKey');
+    if (!device) return res.status(404).json({ error: 'Device not found' });
+
+    // Authorization: owner or admin/staff
+    const user = await User.findById(userId);
+    const isAdmin = user.role?.toLowerCase() === 'admin';
+    const isstaff = user.role?.toLowerCase() === 'staff';
+    if (device.user && device.user.toString() !== userId && !isAdmin && !isstaff) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
+
+    // If V2Ray
+    if (device.server?.vpnType === 'v2ray') {
+      if (!device.v2rayUser || !device.v2rayUser.userId) {
+        return res.status(400).json({ error: 'Device missing V2Ray user id' });
+      }
+
+      const server = await VpnServer.findById(device.server._id)
+        .select('+outline.adminAccessKey +outline.ssh.privateKey +v2ray.ssh.privateKey');
+      if (!server) return res.status(404).json({ error: 'Server not found' });
+
+      const vpnService = getVpnService(server);
+      try {
+        const stats = await vpnService.getUserStats(device.v2rayUser.userId);
+        return res.json({ deviceId: device._id, stats });
+      } catch (err) {
+        // Try a raw SSH fallback for diagnostics if SSH credentials exist on the server
+        try {
+          const sshCfg = server.v2ray?.ssh || server.ssh || server.outline?.ssh || null;
+          if (sshCfg) {
+            const exec = new SSHExecutor(server);
+            try {
+              const raw = await exec.executeCommand(`xray api statsquery -pattern "user>>>${device.v2rayUser.userId}>>>traffic"`);
+              let parsed = null;
+              try { parsed = JSON.parse(raw); } catch (e) { /* non-json */ }
+              if (parsed && Array.isArray(parsed.stat) && parsed.stat.length) {
+                // reuse parsing logic
+                  let uplink = 0, downlink = 0;
+                  for (const s of parsed.stat) {
+                    if (!s || !s.name) continue;
+                    if (s.name.endsWith('uplink')) uplink = Number(s.value) || 0;
+                    if (s.name.endsWith('downlink')) downlink = Number(s.value) || 0;
+                  }
+                  const total = uplink + downlink;
+                  return res.json({ deviceId: device._id, stats: { userId: device.v2rayUser.userId, bytesUsed: total, uplink, downlink } });
+              }
+              // If parsed empty, try broad query
+              const rawAll = await exec.executeCommand('xray api statsquery -pattern ""');
+              let parsedAll = null;
+              try { parsedAll = JSON.parse(rawAll); } catch (e) { /* ignore */ }
+              if (parsedAll && Array.isArray(parsedAll.stat)) {
+                let uplink = 0, downlink = 0;
+                const uid = String(device.v2rayUser.userId || '');
+                const uname = String(device.v2rayUser.name || '');
+                for (const s of parsedAll.stat) {
+                  if (!s || !s.name) continue;
+                  const n = s.name;
+                  if (uid && n.includes(`user>>>${uid}>>>traffic`)) {
+                    if (n.endsWith('uplink')) uplink = Number(s.value) || 0;
+                    if (n.endsWith('downlink')) downlink = Number(s.value) || 0;
+                  }
+                  if (uname && n.includes(`user>>>${uname}>>>traffic`)) {
+                    if (n.endsWith('uplink')) uplink = Number(s.value) || uplink;
+                    if (n.endsWith('downlink')) downlink = Number(s.value) || downlink;
+                  }
+                }
+                const total = uplink + downlink;
+                if (total > 0) return res.json({ deviceId: device._id, stats: { userId: device.v2rayUser.userId, bytesUsed: total, uplink, downlink } });
+              }
+              // Return extended diagnostic information
+              return res.status(500).json({ error: err.message, sshRaw: raw || null, sshAllRaw: rawAll || null });
+            } catch (sshErr) {
+              // include sshErr message with the original error
+              return res.status(500).json({ error: err.message, sshError: sshErr.message });
+            }
+          }
+        } catch (diagErr) {
+          // fall through to send original
+        }
+
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
+    // If Outline
+    if (device.server?.vpnType === 'outline') {
+      if (!device.accessKey || !device.accessKey.accessKeyId) {
+        return res.status(400).json({ error: 'Device missing access key id' });
+      }
+      const server = await VpnServer.findById(device.server._id)
+        .select('+outline.adminAccessKey +outline.ssh.privateKey +v2ray.ssh.privateKey');
+      if (!server) return res.status(404).json({ error: 'Server not found' });
+      const vpnService = getVpnService(server);
+      try {
+        const metrics = await vpnService.makeRequest('GET', 'metrics/transfer');
+        const bytes = metrics?.bytesTransferredByUserId?.[device.accessKey.accessKeyId] || 0;
+        return res.json({ deviceId: device._id, stats: { userId: device.accessKey.accessKeyId, bytesUsed: bytes } });
+      } catch (err) {
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
+    // WireGuard - delegate to WireGuard service if implemented
+    if (device.server?.vpnType === 'wireguard') {
+      const server = await VpnServer.findById(device.server._id)
+        .select('+outline.adminAccessKey +outline.ssh.privateKey +v2ray.ssh.privateKey');
+      if (!server) return res.status(404).json({ error: 'Server not found' });
+      const vpnService = getVpnService(server);
+      try {
+        const stats = await vpnService.getUserStats(device.publicKey || device.vpnIp);
+        return res.json({ deviceId: device._id, stats });
+      } catch (err) {
+        return res.status(500).json({ error: err.message });
+      }
+    }
+
+    return res.status(400).json({ error: 'Unsupported VPN type for stats' });
+  } catch (err) {
+    return res.status(500).json({ error: err.message });
   }
 };
 

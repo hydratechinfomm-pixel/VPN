@@ -69,6 +69,7 @@ export const devicesAPI = {
   disconnect: (deviceId) => api.post(`/devices/${deviceId}/disconnect`),
   migrate: (deviceId, payload) => api.post(`/devices/${deviceId}/migrate`, payload),
   getHistory: (deviceId) => api.get(`/devices/${deviceId}/history`),
+  getStats: (deviceId) => api.get(`/devices/${deviceId}/stats`),
 };
 
 // Plans API
