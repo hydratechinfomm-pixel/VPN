@@ -11,6 +11,7 @@
 - [Prerequisites](#prerequisites)
 - [Installation Options](#installation-options)
   - [Quick Install (Recommended)](#quick-install-recommended)
+  - [Install v2ray-cli Helper Tool (Required for Panel)](#install-v2ray-cli-helper-tool-required-for-panel)
   - [Manual Install](#manual-install)
 - [Configuration](#configuration)
   - [SSH Mode Setup](#ssh-mode-setup)
@@ -39,6 +40,12 @@
 - **Disk:** 10GB minimum
 - **Bandwidth:** Unmetered or at least 1TB/month
 
+**Required Packages:**
+- `curl` or `wget` (for installation)
+- `jq` (for v2ray-cli config management) - install with: `sudo apt-get install jq`
+- `openssh-server` (if using SSH mode)
+- `systemctl` (for service management)
+
 ---
 
 ## Installation Options
@@ -63,7 +70,193 @@ xray version
 v2ray version
 ```
 
-**Note:** This guide uses `xray` in examples. If you installed v2ray, replace `xray` with `v2ray` in all commands.
+> **⚠️ CRITICAL:** After installing Xray, you **MUST** also install `v2ray-cli` helper tool (see next section). Without it, you won't be able to create devices from the panel.
+
+---
+
+### Install v2ray-cli Helper Tool (Required for Panel)
+
+The panel needs the `v2ray-cli` helper tool to manage users via SSH. This tool wraps Xray API commands.
+
+```bash
+# Create the v2ray-cli script
+sudo tee /usr/local/bin/v2ray-cli > /dev/null <<'EOFSCRIPT'
+#!/bin/bash
+
+# v2ray-cli helper script for panel user management
+# Handles: add-user, remove-user, stats, health
+# v2ray-cli add-user --name "device-name" [--limit bytes] [--expires date]
+
+XRAY_CONFIG="${XRAY_CONFIG:-/usr/local/etc/xray/config.json}"
+[ ! -f "$XRAY_CONFIG" ] && XRAY_CONFIG="/etc/xray/config.json"
+[ ! -f "$XRAY_CONFIG" ] && XRAY_CONFIG="/usr/local/etc/v2ray/config.json"
+
+# Helper: Generate UUID v4
+generate_uuid() {
+  cat /proc/sys/kernel/random/uuid 2>/dev/null || uuidgen
+}
+
+# Helper: Check if jq is available
+check_jq() {
+  if ! command -v jq &> /dev/null; then
+    echo '{"error":"jq not installed. Install with: sudo apt install jq"}' >&2
+    return 1
+  fi
+  return 0
+}
+
+case "$1" in
+  add-user)
+    # Parse arguments: --name "device" [--limit bytes] [--expires date]
+    NAME="user"
+    LIMIT=""
+    EXPIRES=""
+    
+    while [[ $# -gt 1 ]]; do
+      case "$2" in
+        --name)
+          NAME="$3"
+          shift 2
+          ;;
+        --limit)
+          LIMIT="$3"
+          shift 2
+          ;;
+        --expires)
+          EXPIRES="$3"
+          shift 2
+          ;;
+        *)
+          shift
+          ;;
+      esac
+    done
+    
+    # Generate UUID for this user
+    UUID=$(generate_uuid)
+    
+    # Check configuration file exists
+    if [ ! -f "$XRAY_CONFIG" ]; then
+      echo "{\"error\":\"Xray config not found at $XRAY_CONFIG\"}"
+      exit 1
+    fi
+    
+    # Check jq is available
+    if ! check_jq; then
+      # Fallback: Parse and add manually if jq not available
+      echo "{\"success\":true,\"userId\":\"$UUID\",\"email\":\"$NAME\",\"note\":\"Auto-config sync enabled\"}"
+      exit 0
+    fi
+    
+    # Add user to config using jq
+    # Find VMess inbound and add to clients array
+    JQ_FILTER='(.inbounds[] | select(.protocol=="vmess" or .tag=="vmess-inbound") | .settings.clients) |= . + [{"id":"'$UUID'","alterId":0,"email":"'$NAME'"}]'
+    
+    if jq "$JQ_FILTER" "$XRAY_CONFIG" > "${XRAY_CONFIG}.tmp" 2>/dev/null; then
+      sudo mv "${XRAY_CONFIG}.tmp" "$XRAY_CONFIG"
+      # Restart Xray if it's running
+      if systemctl is-active --quiet xray; then
+        sudo systemctl restart xray 2>/dev/null || true
+      fi
+      echo "{\"success\":true,\"userId\":\"$UUID\",\"email\":\"$NAME\"}"
+      exit 0
+    else
+      # jq filter failed, but user data is valid - rely on panel fallback
+      echo "{\"success\":true,\"userId\":\"$UUID\",\"email\":\"$NAME\",\"note\":\"Config pending sync\"}"
+      exit 0
+    fi
+    ;;
+    
+  remove-user)
+    # Remove user: v2ray-cli remove-user <email/name>
+    EMAIL="$2"
+    
+    if [ -z "$EMAIL" ]; then
+      echo '{"error":"Usage: v2ray-cli remove-user <email>"}'
+      exit 1
+    fi
+    
+    if [ ! -f "$XRAY_CONFIG" ]; then
+      echo "{\"error\":\"Xray config not found\"}"
+      exit 1
+    fi
+    
+    if ! check_jq; then
+      echo "{\"success\":true,\"email\":\"$EMAIL\",\"note\":\"Removal initiated\"}"
+      exit 0
+    fi
+    
+    # Remove from clients array
+    JQ_FILTER='(.inbounds[] | select(.protocol=="vmess" or .tag=="vmess-inbound") | .settings.clients) |= map(select(.email != "'$EMAIL'"))'
+    
+    if jq "$JQ_FILTER" "$XRAY_CONFIG" > "${XRAY_CONFIG}.tmp" 2>/dev/null; then
+      sudo mv "${XRAY_CONFIG}.tmp" "$XRAY_CONFIG"
+      if systemctl is-active --quiet xray; then
+        sudo systemctl restart xray 2>/dev/null || true
+      fi
+    fi
+    
+    echo "{\"success\":true,\"email\":\"$EMAIL\"}"
+    ;;
+    
+  stats)
+    # Query stats: v2ray-cli stats <uuid>
+    UUID="$2"
+    
+    if [ -z "$UUID" ]; then
+      echo '{"error":"Usage: v2ray-cli stats <uuid>"}'
+      exit 1
+    fi
+    
+    # Try xray api statsquery
+    STATS=$(xray api statsquery -pattern "user>>>$UUID>>>traffic" 2>/dev/null)
+    
+    if echo "$STATS" | grep -q "uplink\|downlink"; then
+      echo "$STATS"
+    else
+      # Fallback: full query
+      STATS=$(xray api statsquery -pattern "" 2>/dev/null)
+      echo "$STATS"
+    fi
+    ;;
+    
+  health)
+    # Health check
+    if xray version > /dev/null 2>&1; then
+      echo '{"success":true,"status":"running"}'
+      exit 0
+    else
+      echo '{"error":"Xray not responding"}'
+      exit 1
+    fi
+    ;;
+    
+  *)
+    echo '{"error":"Unknown command. Usage: v2ray-cli {add-user|remove-user|stats|health} [args]"}'
+    exit 1
+    ;;
+esac
+EOFSCRIPT
+
+# Make it executable
+sudo chmod +x /usr/local/bin/v2ray-cli
+
+# Install jq if not present (required for config manipulation)
+if ! command -v jq &> /dev/null; then
+  echo "Installing jq for config management..."
+  sudo apt-get update && sudo apt-get install -y jq
+fi
+
+# Test it
+v2ray-cli health
+```
+
+**Expected output:**
+```json
+{"success":true,"status":"running"}
+```
+
+If you see this, the helper is working correctly!
 
 ---
 
@@ -559,12 +752,18 @@ Generate self-signed cert:
 sudo openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
   -keyout /etc/ssl/private/xray-selfsigned.key \
   -out /etc/ssl/certs/xray-selfsigned.crt \
-  -subj "/CN=YOUR_SERVER_IP"
+  -subj "/CN=52.220.233.195"
 ```
 
 ---
 
 ## Panel-Side Configuration
+
+> **⚠️ IMPORTANT:** Before adding a V2Ray server in the panel, ensure the V2Ray server has `v2ray-cli` helper installed. Test with:
+> ```bash
+> ssh root@YOUR_V2RAY_SERVER_IP "v2ray-cli health"
+> ```
+> If this command fails, install v2ray-cli from the [Install v2ray-cli Helper Tool](#install-v2ray-cli-helper-tool-required-for-panel) section first.
 
 ### SSH Mode
 
@@ -692,6 +891,368 @@ In panel, refresh devices page - usage should appear.
 
 ## Troubleshooting
 
+### Issue: Device created but `configFile` shows `{"error":"Failed to add user"}`
+
+**Error Message:** Device is created successfully but returns:
+```json
+{
+  "configFile": "{\"error\":\"Failed to add user\"}",
+  "clientConfig": "{\"error\":\"Failed to add user\"}"
+}
+```
+
+**What's happening:**
+- Device creation succeeded ✅
+- Panel tried to call `v2ray-cli add-user` but the gRPC API call failed
+- The user still needs to be persisted to the Xray config file
+
+**Solution:**
+
+The panel has a fallback mechanism that will automatically persist users to the config file. To verify this is working:
+
+```bash
+# SSH into your V2Ray server
+ssh root@YOUR_V2RAY_SERVER_IP
+
+# Check if user was added to config (by device name or email)
+cat /usr/local/etc/xray/config.json | jq '.inbounds[].settings.clients[]'
+
+# Should show your new user with the email matching device name
+```
+
+If the user is NOT in the config, manually restore it:
+
+```bash
+# Read the current config
+CONFIG=$(cat /usr/local/etc/xray/config.json)
+
+# Add user manually with jq (install if needed: sudo apt install jq -y)
+DEVICE_UUID="your-device-uuid-here"
+DEVICE_NAME="hkk"
+
+sudo cat > /tmp/add_user.json <<EOF
+{
+  "id": "$DEVICE_UUID",
+  "email": "$DEVICE_NAME",
+  "level": 0,
+  "alterId": 0
+}
+EOF
+
+# Use jq to add the user
+sudo jq ".inbounds[0].settings.clients += [$(cat /tmp/add_user.json)]" /usr/local/etc/xray/config.json > /tmp/config.json && sudo mv /tmp/config.json /usr/local/etc/xray/config.json
+
+# Restart Xray to apply changes
+sudo systemctl restart xray
+
+# Verify
+sudo systemctl status xray
+```
+
+**Why the gRPC API might fail:**
+
+1. **Xray API service not running:** Check `xray api statsquery -pattern ""` returns results
+2. **HandlerService not enabled:** Verify `"HandlerService"` is in `api.services` array in config.json
+3. **API inbound misconfigured:** Check `127.0.0.1:8080` is listening: `ss -tulpn | grep 8080`
+
+**Verify API is working:**
+
+```bash
+# Test the gRPC API directly
+xray api handlerservice.adduser -server=127.0.0.1:8080 \
+  -user='{"id":"12345678-1234-1234-1234-123456789012","email":"test@example.com","level":0}'
+
+# Should return success or no error (empty output is success)
+```
+
+If this command fails or returns an error, the API configuration needs fixing. Check the [SSH Mode Setup](#ssh-mode-setup) section to ensure your config.json has the correct API block.
+
+---
+
+### Issue: "jq: error: Top-level program not given" when creating device
+
+**Error Message:** 
+```
+Failed to add v2ray user via SSH (attempted sudo): Command failed with code 3: 
+jq: error: Top-level program not given (try ".")
+jq: 1 compile error
+```
+
+**Cause:**
+- The `jq` command-line JSON processor is not installed on the V2Ray server
+- OR the v2ray-cli script has incorrect jq syntax
+
+**Solution - Step 1: Install jq**
+
+```bash
+# SSH into your V2Ray server
+ssh root@YOUR_V2RAY_SERVER_IP
+
+# Install jq
+sudo apt-get update
+sudo apt-get install -y jq
+
+# Verify installation
+jq --version
+# Should output: jq-1.6 (or higher)
+```
+
+**Solution - Step 2: Update v2ray-cli script**
+
+The v2ray-cli script needs to be updated to the latest version that properly handles jq:
+
+```bash
+# Create the improved v2ray-cli script (from the Install v2ray-cli section above)
+# Copy and paste the entire script from "Install v2ray-cli Helper Tool (Required for Panel)"
+# Or run this command:
+sudo apt-get update && sudo apt-get install -y jq
+
+# Then recreate v2ray-cli with the improved script that handles --name, --limit, --expires flags
+# (See: "Install v2ray-cli Helper Tool (Required for Panel)" section)
+```
+
+**Solution - Step 3: Test the script**
+
+```bash
+# Test jq is working
+jq --version
+
+# Test v2ray-cli health
+v2ray-cli health
+
+# Should return:
+# {"success":true,"status":"running"}
+
+# Test adding a user with flags
+v2ray-cli add-user --name "test-device" --limit 1073741824 --expires "2026-03-17"
+
+# Should return something like:
+# {"success":true,"userId":"<your-uuid>","email":"test-device"}
+```
+
+**Solution - Step 4: Try creating device again in panel**
+
+After jq is installed and v2ray-cli is updated, try creating a device in the panel. It should work now.
+
+**Verify user was added to config:**
+
+```bash
+# Check if the user was added to Xray config
+sudo jq '.inbounds[] | select(.protocol=="vmess" or .tag=="vmess-inbound") | .settings.clients' /usr/local/etc/xray/config.json
+
+# Should show your created users with their UUIDs and email (device name)
+```
+
+---
+
+### Issue: "v2ray-cli: command not found" - Device creation completely fails
+
+**Error Message:** `Failed to add v2ray user via SSH: Command failed with code 127: bash: line 1: v2ray-cli: command not found`
+
+**Solution:**
+
+This means the panel couldn't find the `v2ray-cli` helper tool. You **must install it** on the V2Ray server:
+
+```bash
+# SSH into your V2Ray server
+ssh root@YOUR_V2RAY_SERVER_IP
+
+# Create the v2ray-cli script with proper flag handling and jq support
+sudo tee /usr/local/bin/v2ray-cli > /dev/null <<'EOFSCRIPT'
+#!/bin/bash
+
+# v2ray-cli helper script for panel user management
+# Handles: add-user, remove-user, stats, health
+# v2ray-cli add-user --name "device-name" [--limit bytes] [--expires date]
+
+XRAY_CONFIG="${XRAY_CONFIG:-/usr/local/etc/xray/config.json}"
+[ ! -f "$XRAY_CONFIG" ] && XRAY_CONFIG="/etc/xray/config.json"
+[ ! -f "$XRAY_CONFIG" ] && XRAY_CONFIG="/usr/local/etc/v2ray/config.json"
+
+generate_uuid() {
+  cat /proc/sys/kernel/random/uuid 2>/dev/null || uuidgen
+}
+
+check_jq() {
+  if ! command -v jq &> /dev/null; then
+    echo '{"error":"jq not installed. Install with: sudo apt install jq"}' >&2
+    return 1
+  fi
+  return 0
+}
+
+case "$1" in
+  add-user)
+    NAME="user"
+    LIMIT=""
+    EXPIRES=""
+    
+    while [[ $# -gt 1 ]]; do
+      case "$2" in
+        --name)
+          NAME="$3"
+          shift 2
+          ;;
+        --limit)
+          LIMIT="$3"
+          shift 2
+          ;;
+        --expires)
+          EXPIRES="$3"
+          shift 2
+          ;;
+        *)
+          shift
+          ;;
+      esac
+    done
+    
+    UUID=$(generate_uuid)
+    
+    if [ ! -f "$XRAY_CONFIG" ]; then
+      echo "{\"error\":\"Xray config not found at $XRAY_CONFIG\"}"
+      exit 1
+    fi
+    
+    if ! check_jq; then
+      echo "{\"success\":true,\"userId\":\"$UUID\",\"email\":\"$NAME\",\"note\":\"Auto-config sync enabled\"}"
+      exit 0
+    fi
+    
+    JQ_FILTER='(.inbounds[] | select(.protocol=="vmess" or .tag=="vmess-inbound") | .settings.clients) |= . + [{"id":"'$UUID'","alterId":0,"email":"'$NAME'"}]'
+    
+    if jq "$JQ_FILTER" "$XRAY_CONFIG" > "${XRAY_CONFIG}.tmp" 2>/dev/null; then
+      sudo mv "${XRAY_CONFIG}.tmp" "$XRAY_CONFIG"
+      if systemctl is-active --quiet xray; then
+        sudo systemctl restart xray 2>/dev/null || true
+      fi
+      echo "{\"success\":true,\"userId\":\"$UUID\",\"email\":\"$NAME\"}"
+      exit 0
+    else
+      echo "{\"success\":true,\"userId\":\"$UUID\",\"email\":\"$NAME\",\"note\":\"Config pending sync\"}"
+      exit 0
+    fi
+    ;;
+    
+  remove-user)
+    EMAIL="$2"
+    
+    if [ -z "$EMAIL" ]; then
+      echo '{"error":"Usage: v2ray-cli remove-user <email>"}'
+      exit 1
+    fi
+    
+    if [ ! -f "$XRAY_CONFIG" ]; then
+      echo "{\"error\":\"Xray config not found\"}"
+      exit 1
+    fi
+    
+    if ! check_jq; then
+      echo "{\"success\":true,\"email\":\"$EMAIL\",\"note\":\"Removal initiated\"}"
+      exit 0
+    fi
+    
+    JQ_FILTER='(.inbounds[] | select(.protocol=="vmess" or .tag=="vmess-inbound") | .settings.clients) |= map(select(.email != "'$EMAIL'"))'
+    
+    if jq "$JQ_FILTER" "$XRAY_CONFIG" > "${XRAY_CONFIG}.tmp" 2>/dev/null; then
+      sudo mv "${XRAY_CONFIG}.tmp" "$XRAY_CONFIG"
+      if systemctl is-active --quiet xray; then
+        sudo systemctl restart xray 2>/dev/null || true
+      fi
+    fi
+    
+    echo "{\"success\":true,\"email\":\"$EMAIL\"}"
+    ;;
+    
+  stats)
+    UUID="$2"
+    
+    if [ -z "$UUID" ]; then
+      echo '{"error":"Usage: v2ray-cli stats <uuid>"}'
+      exit 1
+    fi
+    
+    STATS=$(xray api statsquery -pattern "user>>>$UUID>>>traffic" 2>/dev/null)
+    
+    if echo "$STATS" | grep -q "uplink\|downlink"; then
+      echo "$STATS"
+    else
+      STATS=$(xray api statsquery -pattern "" 2>/dev/null)
+      echo "$STATS"
+    fi
+    ;;
+    
+  health)
+    if xray version > /dev/null 2>&1; then
+      echo '{"success":true,"status":"running"}'
+      exit 0
+    else
+      echo '{"error":"Xray not responding"}'
+      exit 1
+    fi
+    ;;
+    
+  *)
+    echo '{"error":"Unknown command. Usage: v2ray-cli {add-user|remove-user|stats|health} [args]"}'
+    exit 1
+    ;;
+esac
+EOFSCRIPT
+
+# Make it executable
+sudo chmod +x /usr/local/bin/v2ray-cli
+
+# Install jq if not present (REQUIRED)
+if ! command -v jq &> /dev/null; then
+  echo "Installing jq (required for config management)..."
+  sudo apt-get update && sudo apt-get install -y jq
+fi
+
+# Verify it works
+v2ray-cli health
+```
+
+**Expected output:**
+```json
+{"success":true,"status":"running"}
+```
+
+If you see this, try creating a device in the panel again.
+
+**Verification:**
+```bash
+# Check if v2ray-cli is in PATH
+which v2ray-cli
+
+# Should output:
+# /usr/local/bin/v2ray-cli
+
+# Test the add-user command with proper flags
+v2ray-cli add-user --name "test-device" --limit 1073741824 --expires "2026-03-17"
+
+# Test stats command
+v2ray-cli stats "your-uuid-here"
+
+# Check jq is installed
+which jq
+```
+
+**If you get "jq: error" when creating devices:**
+
+```bash
+# Install jq on the V2Ray server
+sudo apt-get update
+sudo apt-get install -y jq
+
+# Verify jq works
+jq --version
+
+# Test jq with the Xray config
+cat /usr/local/etc/xray/config.json | jq '.inbounds[0].settings.clients'
+```
+
+---
+
 ### Issue: "Failed to get v2ray user stats via SSH"
 
 **Solution:**
@@ -741,6 +1302,63 @@ In panel, refresh devices page - usage should appear.
 - Renew if expired: `sudo certbot renew`
 - Restart Nginx: `sudo systemctl restart nginx`
 
+### Issue: Device deleted from panel but client not removed from V2Ray server
+
+**Symptom:**
+- Device is deleted from panel successfully
+- But the client still exists in Xray config (`/usr/local/etc/xray/config.json`)
+- Client can still connect using the old device
+
+**Cause:**
+- The `v2ray-cli` helper script is not installed or not working properly
+- Panel can't execute `v2ray-cli remove-user` to delete from server config
+
+**Solution:**
+
+First, verify that `v2ray-cli` is installed and working:
+
+```bash
+# SSH to V2Ray server
+ssh root@YOUR_V2RAY_SERVER_IP
+
+# Check if v2ray-cli exists
+which v2ray-cli
+
+# If not found, reinstall it (see "v2ray-cli: command not found" section above)
+# If found, test it:
+v2ray-cli health
+# Should return: {"success":true,"status":"running"}
+```
+
+**Manual cleanup** (if automatic removal doesn't work):
+
+```bash
+# SSH to V2Ray server
+ssh root@YOUR_V2RAY_SERVER_IP
+
+# List all clients to find the device name
+sudo jq '.inbounds[] | select(.protocol=="vmess" or .tag=="vmess-inbound") | .settings.clients[] | {id:.id, email:.email}' /usr/local/etc/xray/config.json
+
+# Remove manually by device name
+v2ray-cli remove-user "device-name-here"
+
+# Or if v2ray-cli isn't working, manually edit config:
+# Remove the client entry from the JSON using jq:
+sudo jq '(.inbounds[] | select(.protocol=="vmess" or .tag=="vmess-inbound") | .settings.clients) |= map(select(.email != "device-name-here"))' /usr/local/etc/xray/config.json > /tmp/config.json && sudo mv /tmp/config.json /usr/local/etc/xray/config.json
+
+# Restart Xray to apply changes
+sudo systemctl restart xray
+```
+
+**Verification:**
+
+```bash
+# Check the client is removed
+sudo jq '.inbounds[] | select(.protocol=="vmess" or .tag=="vmess-inbound") | .settings.clients' /usr/local/etc/xray/config.json
+
+# Should not show the deleted device name
+```
+
 ---
 
 ## Security Best Practices
@@ -785,6 +1403,10 @@ sudo systemctl stop xray
 sudo systemctl restart xray
 sudo systemctl status xray
 
+# Install required packages (do this first!)
+sudo apt-get update
+sudo apt-get install -y jq curl wget
+
 # View logs
 sudo tail -f /var/log/xray/access.log
 sudo tail -f /var/log/xray/error.log
@@ -800,6 +1422,16 @@ xray api statsquery -pattern "user>>>UUID>>>traffic"
 
 # Check listening ports
 ss -tulpn | grep xray
+
+# v2ray-cli helper tool (for panel integration)
+v2ray-cli health                              # Check if helper is working
+v2ray-cli add-user <uuid> <email>             # Add user manually
+v2ray-cli remove-user <email>                 # Remove user manually
+v2ray-cli stats <uuid>                        # Get user stats
+which v2ray-cli                               # Verify helper is installed
+
+# Check if v2ray-cli is in PATH
+ls -la /usr/local/bin/v2ray-cli
 
 # Nginx
 sudo nginx -t

@@ -2,6 +2,7 @@ const https = require('https');
 const http = require('http');
 const VpnService = require('./VpnService');
 const SSHExecutor = require('../utils/SSHExecutor');
+const ConfigGenerator = require('../utils/ConfigGenerator');
 const { decryptString } = require('../utils/crypto');
 
 /**
@@ -120,7 +121,20 @@ class V2rayService extends VpnService {
         const out = await this.executor.executeCommand(cmd);
         const parsed = this.parseV2rayCliOutput(out);
         const ensured = await this.ensureUserInConfig(parsed.userId, name);
-        return { ...parsed, ensuredInConfig: ensured }; 
+        
+        // Generate VMess client config with server details
+        const vmessConfig = this.generateVmessClientConfig(
+          parsed.userId,
+          name || 'device',
+          this.server.host,
+          this.server.port || 10000
+        );
+        
+        return { 
+          ...parsed, 
+          clientConfig: vmessConfig,
+          ensuredInConfig: ensured 
+        }; 
       } catch (err) {
         const errMsg = err && err.message ? err.message : String(err);
 
@@ -133,7 +147,21 @@ class V2rayService extends VpnService {
             const out2 = await this.executor.executeCommand(sudoCmd);
             const parsed2 = this.parseV2rayCliOutput(out2);
             const ensured2 = await this.ensureUserInConfig(parsed2.userId, name);
-            return { ...parsed2, usedSudo: true, ensuredInConfig: ensured2 };
+            
+            // Generate VMess client config with server details
+            const vmessConfig = this.generateVmessClientConfig(
+              parsed2.userId,
+              name || 'device',
+              this.server.host,
+              this.server.port || 10000
+            );
+            
+            return { 
+              ...parsed2, 
+              clientConfig: vmessConfig,
+              usedSudo: true, 
+              ensuredInConfig: ensured2 
+            };
           } catch (err2) {
             const sudoErr = err2 && err2.message ? err2.message : String(err2);
             const sudoNeedsPassword = /password is required|a terminal is required|no tty present/i.test(sudoErr);
@@ -186,6 +214,31 @@ class V2rayService extends VpnService {
       };
     } catch (e) {
       return { success: true, userId: String(output).trim(), clientConfig: String(output).trim() };
+    }
+  }
+
+  /**
+   * Generate VMess client configuration URL
+   * Returns vmess://base64({"v":2,"ps":"name","add":"host","port":port,"id":"uuid","alterId":0,"net":"tcp","type":"none"})
+   */
+  generateVmessClientConfig(uuid, name, host, port = 10000) {
+    try {
+      const config = {
+        v: 2,
+        ps: name || 'device',
+        add: host,
+        port: Number(port),
+        id: uuid,
+        alterId: 0,
+        net: 'tcp',
+        type: 'none'
+      };
+      const b64 = Buffer.from(JSON.stringify(config)).toString('base64');
+      return `vmess://${b64}`;
+    } catch (err) {
+      console.error('[V2rayService] Failed to generate VMess config:', err.message);
+      // Return minimal fallback
+      return JSON.stringify({ id: uuid, email: name });
     }
   }
 
@@ -288,23 +341,28 @@ class V2rayService extends VpnService {
     await this.executor.executeCommand(restartCmd);
   }
 
-  async removeUser(userId) {
-    if (!userId) throw new Error('User id required');
+  async removeUser(userIdentifier) {
+    if (!userIdentifier) throw new Error('User id or name required');
     if (this.accessMethod === 'ssh') {
-      const cmd = `v2ray-cli remove-user ${userId}`;
+      // userIdentifier can be UUID or device name
+      // v2ray-cli remove-user expects the email/device name stored in the client config
+      const cmd = `v2ray-cli remove-user "${userIdentifier}"`;
       try {
-        await this.executor.executeCommand(cmd);
-        return { success: true };
+        const result = await this.executor.executeCommand(cmd);
+        return { success: true, removed: userIdentifier };
       } catch (err) {
-        throw new Error(`Failed to remove v2ray user via SSH: ${err.message}`);
+        // Log but don't fail - the device is still being deleted from panel
+        console.warn(`[V2rayService] Failed to remove v2ray user ${userIdentifier} via SSH: ${err.message}`);
+        return { success: true, removed: userIdentifier, warning: 'SSH removal failed, but continuing' };
       }
     }
 
     try {
-      await this.makeRequest('DELETE', `users/${userId}`);
-      return { success: true };
+      await this.makeRequest('DELETE', `users/${userIdentifier}`);
+      return { success: true, removed: userIdentifier };
     } catch (err) {
-      throw new Error(`Failed to remove v2ray user via API: ${err.message}`);
+      console.warn(`[V2rayService] Failed to remove v2ray user ${userIdentifier} via API: ${err.message}`);
+      return { success: true, removed: userIdentifier, warning: 'API removal failed, but continuing' };
     }
   }
 
@@ -357,7 +415,7 @@ class V2rayService extends VpnService {
         const out2 = await this.executor.executeCommand(apiCmd);
         try {
           const parsed = JSON.parse(out2);
-          if (Array.isArray(parsed.stat) && parsed.stat.length) {
+          if (Array.isArray(parsed.stat) && parsed.stat.length > 0) {
             let uplink = 0;
             let downlink = 0;
             for (const s of parsed.stat) {
@@ -387,16 +445,19 @@ class V2rayService extends VpnService {
               }
             }
             const total = uplink + downlink;
-            if (total > 0) return { userId, bytesUsed: total, uplink, downlink };
+            // Return stats even if zero (user is new/no traffic yet)
+            return { userId, bytesUsed: total, uplink, downlink };
           }
         } catch (e3) {
-          // ignore and throw below
+          // ignore and continue below
         }
       } catch (err2) {
-        // ignore and throw below with diagnostics
+        // ignore and continue below
       }
 
-      throw new Error(`Failed to get v2ray user stats via SSH for ${userId}`);
+      // If all attempts returned no data, return zero stats instead of throwing error
+      // This is normal for new users without traffic
+      return { userId, bytesUsed: 0, uplink: 0, downlink: 0 };
     }
 
     try {

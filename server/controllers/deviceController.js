@@ -1197,6 +1197,21 @@ exports.deleteDevice = async (req, res) => {
           await AccessKey.findByIdAndDelete(device.accessKey);
         }
       }
+    } else if (server.vpnType === 'v2ray') {
+      // Remove user from V2Ray/Xray server
+      if (device.v2rayUser) {
+        try {
+          // Get the V2rayUser document to retrieve the device name
+          const v2rayUserDoc = await V2rayUser.findById(device.v2rayUser);
+          if (v2rayUserDoc) {
+            // Pass device name (email) to removeUser - this matches the client config
+            await vpnService.removeUser(v2rayUserDoc.name || v2rayUserDoc.userId);
+          }
+        } catch (error) {
+          console.error('Failed to remove V2Ray user:', error);
+          // Continue with deletion even if removal fails
+        }
+      }
     }
 
     // Delete device from database
