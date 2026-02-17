@@ -28,6 +28,42 @@ PersistentKeepalive = 25
   }
 
   /**
+   * Normalize / override host inside a VMess clientConfig (vmess:// or JSON)
+   * - If server.v2ray.publicHost is present, replace `add` and `host` fields
+   */
+  static normalizeVmessClientConfig(clientConfig, server) {
+    const publicHost = server?.v2ray?.publicHost;
+    if (!publicHost || !clientConfig) return clientConfig;
+
+    // vmess://<base64-json>
+    if (String(clientConfig).trim().startsWith('vmess://')) {
+      try {
+        const b64 = String(clientConfig).trim().replace(/^vmess:\/\//, '');
+        const json = Buffer.from(b64, 'base64').toString('utf8');
+        const obj = JSON.parse(json);
+        obj.add = publicHost;
+        obj.host = publicHost;
+        return `vmess://${Buffer.from(JSON.stringify(obj)).toString('base64')}`;
+      } catch (e) {
+        return clientConfig;
+      }
+    }
+
+    // Attempt JSON parse and modify
+    try {
+      const parsed = JSON.parse(String(clientConfig));
+      if (parsed && parsed.add) {
+        parsed.add = publicHost;
+        parsed.host = publicHost;
+        return `vmess://${Buffer.from(JSON.stringify(parsed)).toString('base64')}`;
+      }
+      return clientConfig;
+    } catch (e) {
+      return clientConfig;
+    }
+  }
+
+  /**
    * Generate VMess (VMess URL) for V2Ray devices
    * - Prefer existing device.configFile or device.v2rayUser.clientConfig
    * - Fallback to a minimal vmess:// URL constructed from server/device fields
@@ -36,9 +72,15 @@ PersistentKeepalive = 25
     // If device already has a vmess URL or JSON, return/normalize it
     if (device?.configFile) {
       const cfg = String(device.configFile).trim();
-      if (cfg.startsWith('vmess://')) return cfg;
+      if (cfg.startsWith('vmess://')) {
+        return server?.v2ray?.publicHost ? ConfigGenerator.normalizeVmessClientConfig(cfg, server) : cfg;
+      }
       try {
         const parsed = JSON.parse(cfg);
+        if (server?.v2ray?.publicHost && parsed.add) {
+          parsed.add = server.v2ray.publicHost;
+          parsed.host = server.v2ray.publicHost;
+        }
         const vmessB64 = Buffer.from(JSON.stringify(parsed)).toString('base64');
         return `vmess://${vmessB64}`;
       } catch (err) {
@@ -51,9 +93,15 @@ PersistentKeepalive = 25
     const v2user = device?.v2rayUser;
     if (v2user && v2user.clientConfig) {
       const cfg = String(v2user.clientConfig).trim();
-      if (cfg.startsWith('vmess://')) return cfg;
+      if (cfg.startsWith('vmess://')) {
+        return server?.v2ray?.publicHost ? ConfigGenerator.normalizeVmessClientConfig(cfg, server) : cfg;
+      }
       try {
         const parsed = JSON.parse(cfg);
+        if (server?.v2ray?.publicHost && parsed.add) {
+          parsed.add = server.v2ray.publicHost;
+          parsed.host = server.v2ray.publicHost;
+        }
         const vmessB64 = Buffer.from(JSON.stringify(parsed)).toString('base64');
         return `vmess://${vmessB64}`;
       } catch (err) {
@@ -62,7 +110,7 @@ PersistentKeepalive = 25
     }
 
     // Fallback: construct a minimal VMess JSON and return vmess://<base64(json)>
-    const host = (server && (server.v2ray?.apiBaseUrl || server.host)) || '127.0.0.1';
+    const host = (server && (server.v2ray?.publicHost || server.v2ray?.apiBaseUrl || server.host)) || '127.0.0.1';
     const port = (server && (server.v2ray?.inboundsPort || server.port)) || 443;
     const id = (v2user && (v2user.userId || v2user.id)) || String(device._id || Date.now());
 

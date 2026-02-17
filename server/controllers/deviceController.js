@@ -372,6 +372,16 @@ async function createV2rayDevice(req, res, server, vpnService, requesterId, devi
       return res.status(500).json({ error: `Failed to create v2ray user: ${error.message}` });
     }
 
+    // If admin configured a publicHost for this server, normalize/override the
+    // helper-returned clientConfig so clients receive the advertised domain.
+    if (server?.v2ray?.publicHost && v2rayData?.clientConfig) {
+      try {
+        v2rayData.clientConfig = require('../utils/ConfigGenerator').normalizeVmessClientConfig(v2rayData.clientConfig, server);
+      } catch (e) {
+        console.warn('[createV2rayDevice] Failed to normalize clientConfig host:', e.message);
+      }
+    }
+
     // Create Device reference
     const device = new Device({
       name,

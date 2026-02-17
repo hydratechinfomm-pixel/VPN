@@ -177,6 +177,8 @@ const vpnServerSchema = new mongoose.Schema(
         type: String,
         default: '/usr/local/etc/v2ray/config.json',
       },
+      // Public host advertised to clients (SNI / VMess `add` field)
+      publicHost: String,
       // Default inbound port
       inboundsPort: Number,
       version: String,

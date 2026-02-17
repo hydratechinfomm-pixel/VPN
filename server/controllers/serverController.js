@@ -209,6 +209,7 @@ exports.createServer = async (req, res) => {
         v2rayTlsVerify,
         v2rayAccessMethod,
         v2rayConfigPath,
+        v2rayPublicHost,
       } = req.body;
 
       // Accept privateKey either as top-level `sshPrivateKey` or nested in `v2ray.ssh.privateKey`.
@@ -221,6 +222,8 @@ exports.createServer = async (req, res) => {
         tlsVerify: v2rayTlsVerify !== undefined ? v2rayTlsVerify : true,
         apiToken: v2rayApiToken,
         accessMethod: v2rayAccessMethod || 'api',
+        // optional public host to advertise in VMess configs (SNI / client `add`)
+        publicHost: v2rayPublicHost || undefined,
         configPath: v2rayConfigPath || '/etc/v2ray/config.json',
         ssh: v2rayAccessMethod === 'ssh' ? {
           host: sshHost || host,
@@ -348,6 +351,8 @@ exports.updateServer = async (req, res) => {
       sshUsername,
       sshPassword,
       sshPrivateKey,
+      // optional V2Ray public host
+      v2rayPublicHost,
     } = req.body;
 
     const server = await VpnServer.findById(serverId)
@@ -383,6 +388,12 @@ exports.updateServer = async (req, res) => {
         server.v2ray = server.v2ray || {};
         server.v2ray.ssh = { ...(server.v2ray.ssh || {}), ...sshUpdate };
       }
+    }
+
+    // If admin provided a public host to advertise for V2Ray, persist it
+    if (typeof v2rayPublicHost !== 'undefined') {
+      server.v2ray = server.v2ray || {};
+      server.v2ray.publicHost = v2rayPublicHost;
     }
 
     await server.save();

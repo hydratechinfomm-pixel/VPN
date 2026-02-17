@@ -33,6 +33,7 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
     // V2Ray settings
     v2rayApiPort: server?.v2ray?.apiPort || 8080,
     v2rayApiBaseUrl: server?.v2ray?.apiBaseUrl || server?.host || '',
+    v2rayPublicHost: server?.v2ray?.publicHost || server?.host || server?.v2ray?.apiBaseUrl || '',
     v2rayApiToken: server?.v2ray?.apiToken || '',
     v2rayTlsVerify: server?.v2ray?.tlsVerify !== undefined ? server.v2ray.tlsVerify : true,
     v2rayAccessMethod: server?.v2ray?.accessMethod || 'api',
@@ -50,6 +51,7 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
   const [formErrors, setFormErrors] = useState({});
   const [useJsonImport, setUseJsonImport] = useState(false);
   const [jsonConfig, setJsonConfig] = useState('');
+  const [showDocs, setShowDocs] = useState(false);
 
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
@@ -163,6 +165,16 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
           errors.v2rayApiBaseUrl = 'Invalid API Base URL';
         }
       }
+
+      if (formData.v2rayPublicHost) {
+        try {
+          // validate as hostname by parsing with https:// prefix
+          // eslint-disable-next-line no-new
+          new URL('https://' + formData.v2rayPublicHost);
+        } catch (err) {
+          errors.v2rayPublicHost = 'Invalid public host';
+        }
+      }
     }
 
     setFormErrors(errors);
@@ -221,6 +233,7 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
         ...base,
         v2rayApiPort: formData.v2rayApiPort,
         v2rayApiBaseUrl: formData.v2rayApiBaseUrl,
+        v2rayPublicHost: formData.v2rayPublicHost,
         v2rayApiToken: formData.v2rayApiToken,
         v2rayTlsVerify: formData.v2rayTlsVerify,
         v2rayAccessMethod: formData.v2rayAccessMethod,
@@ -258,7 +271,7 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
       <div className="modal-content">
         <h2>
           {server
-            ? `Edit ${formData.vpnType === 'outline' ? 'Outline' : 'WireGuard'} Server`
+            ? `Edit ${formData.vpnType === 'outline' ? 'Outline' : formData.vpnType === 'v2ray' ? 'V2Ray' : 'WireGuard'} Server`
             : 'Add VPN Server'}
         </h2>
 
@@ -687,78 +700,111 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
           {formData.vpnType === 'v2ray' && (
             <>
               <h3>V2Ray (VMess) Server Settings</h3>
+              <button type="button" className="btn-secondary" style={{ float: 'right', marginBottom: 8 }} onClick={() => setShowDocs(true)}>
+                Docs
+              </button>
 
-              <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', marginBottom: '0.75rem' }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                  <input
-                    type="checkbox"
-                    checked={formData.v2rayAccessMethod === 'ssh'}
-                    onChange={(e) => {
-                      const val = e.target.checked ? 'ssh' : 'api';
-                      setFormData((prev) => ({ ...prev, v2rayAccessMethod: val }));
-                      setFormErrors((prev) => ({ ...prev, sshHost: undefined, sshUsername: undefined, sshPrivateKey: undefined }));
-                    }}
-                  />
-                  <strong>Manage server via SSH</strong>
-                </label>
-                <small style={{ color: '#6b7280' }}>Enable to provide SSH credentials instead of using the management API</small>
-              </div>
+              {/* Hide API fields if SSH is selected, and vice versa */}
+              {formData.v2rayAccessMethod !== 'ssh' && (
+                <>
+                  <div className="form-row">
+                    <div className="form-group">
+                      <label htmlFor="v2rayApiBaseUrl">API Base URL</label>
+                      <input
+                        type="text"
+                        id="v2rayApiBaseUrl"
+                        name="v2rayApiBaseUrl"
+                        value={formData.v2rayApiBaseUrl}
+                        onChange={handleChange}
+                        placeholder="e.g., https://1.2.3.4"
+                      />
+                      <small>Management API base URL for V2Ray helper (if available)</small>
+                      {formErrors.v2rayApiBaseUrl && (
+                        <div className="error-message" style={{ marginTop: '6px' }}>
+                          {formErrors.v2rayApiBaseUrl}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="form-group">
+                      <label htmlFor="v2rayApiPort">API Port</label>
+                      <input
+                        type="number"
+                        id="v2rayApiPort"
+                        name="v2rayApiPort"
+                        value={formData.v2rayApiPort}
+                        onChange={handleChange}
+                        placeholder="8080"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="form-row">
+                    <div className="form-group">
+                      <label htmlFor="v2rayApiToken">API Token</label>
+                      <input
+                        type="text"
+                        id="v2rayApiToken"
+                        name="v2rayApiToken"
+                        value={formData.v2rayApiToken}
+                        onChange={handleChange}
+                        placeholder="Optional API token for management API"
+                      />
+                    </div>
+                  </div>
+                  <div className="form-group">
+                    <label htmlFor="v2rayTlsVerify">TLS Verify</label>
+                    <div className="radio-group">
+                      <label>
+                        <input
+                          type="checkbox"
+                          id="v2rayTlsVerify"
+                          name="v2rayTlsVerify"
+                          checked={!!formData.v2rayTlsVerify}
+                          onChange={handleChange}
+                        />
+                        <span>Verify TLS certificate when connecting to management API</span>
+                      </label>
+                    </div>
+                    <small>Disable only for self-signed certs (not recommended)</small>
+                  </div>
+                </>
+              )}
+
+              {/* SSH-only fields */}
+              {formData.v2rayAccessMethod === 'ssh' && (
+                <div className="form-row">
+                  <div className="form-group">
+                    <label htmlFor="v2rayConfigPath">Config Path (SSH mode)</label>
+                    <input
+                      type="text"
+                      id="v2rayConfigPath"
+                      name="v2rayConfigPath"
+                      value={formData.v2rayConfigPath}
+                      onChange={handleChange}
+                      placeholder="/usr/local/etc/v2ray/config.json"
+                    />
+                  </div>
+                </div>
+              )}
 
               <div className="form-row">
                 <div className="form-group">
-                  <label htmlFor="v2rayApiBaseUrl">API Base URL</label>
+                  <label htmlFor="v2rayPublicHost">Public host (advertised to clients)</label>
                   <input
                     type="text"
-                    id="v2rayApiBaseUrl"
-                    name="v2rayApiBaseUrl"
-                    value={formData.v2rayApiBaseUrl}
+                    id="v2rayPublicHost"
+                    name="v2rayPublicHost"
+                    value={formData.v2rayPublicHost}
                     onChange={handleChange}
-                    placeholder="e.g., https://1.2.3.4"
+                    placeholder="e.g., mingalarpar.news"
                   />
-                  <small>Optional: management API base URL for V2Ray helper (if available)</small>
-                  {formErrors.v2rayApiBaseUrl && (
+                  <small>Optional: domain to advertise in VMess configs (SNI / Cloudflare proxied host)</small>
+                  {formErrors.v2rayPublicHost && (
                     <div className="error-message" style={{ marginTop: '6px' }}>
-                      {formErrors.v2rayApiBaseUrl}
+                      {formErrors.v2rayPublicHost}
                     </div>
                   )}
-                </div>
-
-                <div className="form-group">
-                  <label htmlFor="v2rayApiPort">API Port</label>
-                  <input
-                    type="number"
-                    id="v2rayApiPort"
-                    name="v2rayApiPort"
-                    value={formData.v2rayApiPort}
-                    onChange={handleChange}
-                    placeholder="8080"
-                  />
-                </div>
-              </div>
-
-              <div className="form-row">
-                <div className="form-group">
-                  <label htmlFor="v2rayApiToken">API Token</label>
-                  <input
-                    type="text"
-                    id="v2rayApiToken"
-                    name="v2rayApiToken"
-                    value={formData.v2rayApiToken}
-                    onChange={handleChange}
-                    placeholder="Optional API token for management API"
-                  />
-                </div>
-
-                <div className="form-group">
-                  <label htmlFor="v2rayConfigPath">Config Path (SSH mode)</label>
-                  <input
-                    type="text"
-                    id="v2rayConfigPath"
-                    name="v2rayConfigPath"
-                    value={formData.v2rayConfigPath}
-                    onChange={handleChange}
-                    placeholder="/usr/local/etc/v2ray/config.json"
-                  />
                 </div>
               </div>
 
@@ -787,23 +833,6 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
                     <span>SSH (remote V2Ray server)</span>
                   </label>
                 </div>
-              </div>
-
-              <div className="form-group">
-                <label htmlFor="v2rayTlsVerify">TLS Verify</label>
-                <div className="radio-group">
-                  <label>
-                    <input
-                      type="checkbox"
-                      id="v2rayTlsVerify"
-                      name="v2rayTlsVerify"
-                      checked={!!formData.v2rayTlsVerify}
-                      onChange={handleChange}
-                    />
-                    <span>Verify TLS certificate when connecting to management API</span>
-                  </label>
-                </div>
-                <small>Disable only for self-signed certs (not recommended)</small>
               </div>
             </>
           )}
@@ -899,6 +928,105 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
             </button>
           </div>
         </form>
+
+        {/* V2Ray Documentation Modal */}
+        {showDocs && (
+          <div style={{ 
+            position: 'fixed', 
+            top: 0, 
+            left: 0, 
+            right: 0, 
+            bottom: 0, 
+            backgroundColor: 'rgba(0,0,0,0.5)', 
+            display: 'flex', 
+            justifyContent: 'center', 
+            alignItems: 'center',
+            zIndex: 1000
+          }}>
+            <div style={{
+              backgroundColor: 'white',
+              borderRadius: '8px',
+              padding: '2rem',
+              maxWidth: '700px',
+              maxHeight: '80vh',
+              overflowY: 'auto',
+              boxShadow: '0 4px 6px rgba(0,0,0,0.1)'
+            }}>
+              <h3>V2Ray Server Setup Documentation</h3>
+              
+              <h4>📋 API Mode Setup (Recommended)</h4>
+              <p><strong>Requirements:</strong></p>
+              <ul>
+                <li>V2Ray/Xray running on the server</li>
+                <li>Management API enabled (port 8080 by default)</li>
+                <li>Network access from panel to API port</li>
+              </ul>
+              <p><strong>Panel Form Fields:</strong></p>
+              <ul>
+                <li><strong>API Base URL:</strong> https://your-server-ip (e.g., https://170.168.61.164)</li>
+                <li><strong>API Port:</strong> Management API port (default: 8080)</li>
+                <li><strong>API Token:</strong> Optional authentication token (if your API requires it)</li>
+                <li><strong>TLS Verify:</strong> Check if using valid certificates; uncheck for self-signed</li>
+                <li><strong>Public host:</strong> Domain to advertise in VMess configs (e.g., mingalarpar.news)</li>
+              </ul>
+
+              <h4>🔐 SSH Mode Setup</h4>
+              <p><strong>Requirements:</strong></p>
+              <ul>
+                <li>SSH access to the V2Ray server</li>
+                <li>v2ray-cli helper script installed on server: /usr/local/bin/v2ray-cli</li>
+                <li>Helper script must be executable and have proper permissions</li>
+                <li>Passwordless sudo recommended for helper operations</li>
+              </ul>
+              <p><strong>Helper Script Installation:</strong></p>
+              <pre style={{ backgroundColor: '#f3f4f6', padding: '0.75rem', borderRadius: '4px', overflow: 'auto' }}>
+{`curl -fsSL https://example.com/v2ray-cli -o /usr/local/bin/v2ray-cli
+chmod +x /usr/local/bin/v2ray-cli
+# For sudo commands without password:
+echo "root ALL=(ALL) NOPASSWD: /usr/local/bin/v2ray-cli" | visudo`}
+              </pre>
+
+              <p><strong>Panel Form Fields (SSH Mode):</strong></p>
+              <ul>
+                <li><strong>SSH Host:</strong> Server IP or hostname (e.g., 170.168.61.164)</li>
+                <li><strong>SSH Port:</strong> SSH port (default: 22)</li>
+                <li><strong>SSH Username:</strong> Remote user (e.g., root, ubuntu)</li>
+                <li><strong>SSH Password:</strong> Password or leave empty for key auth</li>
+                <li><strong>SSH Private Key:</strong> Full OpenSSH private key (-----BEGIN OPENSSH PRIVATE KEY-----...)</li>
+                <li><strong>Config Path:</strong> Path to v2ray config.json (e.g., /etc/v2ray/config.json)</li>
+                <li><strong>Public host:</strong> Domain to advertise in VMess configs</li>
+              </ul>
+
+              <h4>🔍 Troubleshooting</h4>
+              <dl style={{ fontSize: '0.9rem' }}>
+                <dt><strong>API connection failed:</strong></dt>
+                <dd>Verify API Base URL and port are correct; check firewall; ensure API service is running</dd>
+                <dt><strong>SSH authentication failed:</strong></dt>
+                <dd>Check SSH credentials, verify SSH host/port, ensure private key format is OpenSSH</dd>
+                <dt><strong>v2ray-cli not found:</strong></dt>
+                <dd>Install the helper script on the server; ensure it's in /usr/local/bin and executable</dd>
+                <dt><strong>Permission denied on /etc/default/v2ray-cli:</strong></dt>
+                <dd>Configure passwordless sudo for the v2ray-cli command</dd>
+              </dl>
+
+              <button 
+                type="button" 
+                onClick={() => setShowDocs(false)} 
+                style={{
+                  marginTop: '1rem',
+                  padding: '0.5rem 1rem',
+                  backgroundColor: '#3b82f6',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer'
+                }}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

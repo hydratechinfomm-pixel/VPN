@@ -149,6 +149,10 @@ router.post(
       .optional()
       .isString()
       .withMessage('v2ray config path must be a string'),
+    body('v2rayPublicHost')
+      .optional()
+      .isString()
+      .withMessage('v2ray public host must be a string'),
   ],
   validateRequest,
   serverController.createServer
