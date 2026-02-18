@@ -38,6 +38,13 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
     v2rayTlsVerify: server?.v2ray?.tlsVerify !== undefined ? server.v2ray.tlsVerify : true,
     v2rayAccessMethod: server?.v2ray?.accessMethod || 'api',
     v2rayConfigPath: server?.v2ray?.configPath || '/usr/local/etc/v2ray/config.json',
+    // V2Ray Cloudflare proxy settings
+    v2rayUseTls: server?.v2ray?.useTls || false,
+    v2rayNetwork: server?.v2ray?.network || 'tcp',
+    v2rayWsPath: server?.v2ray?.wsPath || '/vpn',
+    v2raySni: server?.v2ray?.sni || server?.v2ray?.publicHost || '',
+    v2rayAlpn: server?.v2ray?.alpn || 'h2,http/1.1',
+    v2rayFingerprint: server?.v2ray?.fingerprint || 'chrome',
 
     // SSH settings (shared for all types)
     sshHost: server?.wireguard?.ssh?.host || server?.outline?.ssh?.host || server?.v2ray?.ssh?.host || server?.host || '',
@@ -112,6 +119,9 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
     // Basic required fields
     if (!formData.name || !formData.name.trim()) errors.name = 'Server name is required';
     if (!formData.host || !formData.host.trim()) errors.host = 'Host/IP is required';
+    if (!formData.port || formData.port < 1 || formData.port > 65535) {
+      errors.port = 'Port must be between 1 and 65535';
+    }
 
     // VPN-specific validation
     if (formData.vpnType === 'wireguard') {
@@ -242,6 +252,13 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
         v2rayTlsVerify: formData.v2rayTlsVerify,
         v2rayAccessMethod: formData.v2rayAccessMethod,
         v2rayConfigPath: formData.v2rayConfigPath,
+        // Cloudflare proxy settings
+        v2rayUseTls: formData.v2rayUseTls,
+        v2rayNetwork: formData.v2rayNetwork,
+        v2rayWsPath: formData.v2rayWsPath,
+        v2raySni: formData.v2raySni,
+        v2rayAlpn: formData.v2rayAlpn,
+        v2rayFingerprint: formData.v2rayFingerprint,
         ...(formData.v2rayAccessMethod === 'ssh' ? sshFields : {}),
       };
     }
@@ -409,6 +426,26 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
               {formErrors.host && (
                 <div className="error-message" style={{ marginTop: '6px' }}>
                   {formErrors.host}
+                </div>
+              )}
+            </div>
+
+            <div className="form-group">
+              <label htmlFor="port">VPN Listen Port *</label>
+              <input
+                type="number"
+                id="port"
+                name="port"
+                value={formData.port}
+                onChange={handleChange}
+                required
+                min="1"
+                max="65535"
+                placeholder="443"
+              />
+              {formErrors.port && (
+                <div className="error-message" style={{ marginTop: '6px' }}>
+                  {formErrors.port}
                 </div>
               )}
             </div>
@@ -811,6 +848,101 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
                   )}
                 </div>
               </div>
+
+              <h3>Cloudflare Proxy / TLS Settings</h3>
+              <div className="form-group">
+                <label>
+                  <input
+                    type="checkbox"
+                    name="v2rayUseTls"
+                    checked={!!formData.v2rayUseTls}
+                    onChange={handleChange}
+                  />
+                  <span>Enable TLS (required for Cloudflare proxy)</span>
+                </label>
+                <small>Enables WebSocket + TLS for CF proxy compatibility</small>
+              </div>
+
+              {formData.v2rayUseTls && (
+                <>
+                  <div className="form-row">
+                    <div className="form-group">
+                      <label htmlFor="v2rayNetwork">Network Type</label>
+                      <select
+                        id="v2rayNetwork"
+                        name="v2rayNetwork"
+                        value={formData.v2rayNetwork}
+                        onChange={handleChange}
+                      >
+                        <option value="tcp">TCP (direct)</option>
+                        <option value="ws">WebSocket (CF proxy)</option>
+                        <option value="grpc">gRPC</option>
+                      </select>
+                      <small>Use WebSocket for Cloudflare proxy</small>
+                    </div>
+
+                    {formData.v2rayNetwork === 'ws' && (
+                      <div className="form-group">
+                        <label htmlFor="v2rayWsPath">WebSocket Path</label>
+                        <input
+                          type="text"
+                          id="v2rayWsPath"
+                          name="v2rayWsPath"
+                          value={formData.v2rayWsPath}
+                          onChange={handleChange}
+                          placeholder="/vpn"
+                        />
+                        <small>Default: /vpn</small>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="form-row">
+                    <div className="form-group">
+                      <label htmlFor="v2raySni">SNI (Server Name Indication)</label>
+                      <input
+                        type="text"
+                        id="v2raySni"
+                        name="v2raySni"
+                        value={formData.v2raySni}
+                        onChange={handleChange}
+                        placeholder="mingalarpar.news"
+                      />
+                      <small>Usually same as public host</small>
+                    </div>
+
+                    <div className="form-group">
+                      <label htmlFor="v2rayFingerprint">Client Fingerprint</label>
+                      <select
+                        id="v2rayFingerprint"
+                        name="v2rayFingerprint"
+                        value={formData.v2rayFingerprint}
+                        onChange={handleChange}
+                      >
+                        <option value="chrome">Chrome</option>
+                        <option value="firefox">Firefox</option>
+                        <option value="safari">Safari</option>
+                        <option value="edge">Edge</option>
+                        <option value="random">Random</option>
+                      </select>
+                      <small>Browser fingerprint for TLS</small>
+                    </div>
+                  </div>
+
+                  <div className="form-group">
+                    <label htmlFor="v2rayAlpn">ALPN (Application Layer Protocol)</label>
+                    <input
+                      type="text"
+                      id="v2rayAlpn"
+                      name="v2rayAlpn"
+                      value={formData.v2rayAlpn}
+                      onChange={handleChange}
+                      placeholder="h2,http/1.1"
+                    />
+                    <small>Default: h2,http/1.1 (HTTP/2 and HTTP/1.1)</small>
+                  </div>
+                </>
+              )}
 
               <h3>V2Ray Access Method</h3>
               <div className="form-group">

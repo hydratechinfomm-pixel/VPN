@@ -150,6 +150,14 @@ exports.createServer = async (req, res) => {
       return res.status(400).json({ error: 'Invalid vpnType. Must be "wireguard", "outline" or "v2ray"' });
     }
 
+    // Check for duplicate host+vpnType combination
+    const existingServer = await VpnServer.findOne({ host, vpnType });
+    if (existingServer) {
+      return res.status(400).json({ 
+        error: `A ${vpnType} server with host "${host}" already exists. The same IP can be used for different VPN types, but not for the same type.` 
+      });
+    }
+
     // Validate required Outline fields
     if (vpnType === 'outline' && !outlineAdminAccessKey) {
       return res.status(400).json({ error: 'Admin access key is required for Outline servers' });
@@ -210,6 +218,13 @@ exports.createServer = async (req, res) => {
         v2rayAccessMethod,
         v2rayConfigPath,
         v2rayPublicHost,
+        // Cloudflare proxy / TLS settings
+        v2rayUseTls,
+        v2rayNetwork,
+        v2rayWsPath,
+        v2raySni,
+        v2rayAlpn,
+        v2rayFingerprint,
       } = req.body;
 
       // Accept privateKey either as top-level `sshPrivateKey` or nested in `v2ray.ssh.privateKey`.
@@ -225,6 +240,13 @@ exports.createServer = async (req, res) => {
         // optional public host to advertise in VMess configs (SNI / client `add`)
         publicHost: v2rayPublicHost || undefined,
         configPath: v2rayConfigPath || '/etc/v2ray/config.json',
+        // Cloudflare proxy / TLS settings
+        useTls: v2rayUseTls || false,
+        network: v2rayNetwork || 'tcp',
+        wsPath: v2rayWsPath || '/vpn',
+        sni: v2raySni || v2rayPublicHost || undefined,
+        alpn: v2rayAlpn || 'h2,http/1.1',
+        fingerprint: v2rayFingerprint || 'chrome',
         ssh: v2rayAccessMethod === 'ssh' ? {
           host: sshHost || host,
           port: sshPort || 22,
@@ -306,6 +328,17 @@ exports.createServer = async (req, res) => {
     });
   } catch (error) {
     console.error('Error creating server:', error);
+    
+    // Handle MongoDB duplicate key error
+    if (error.code === 11000 || error.name === 'MongoServerError') {
+      const duplicateField = error.keyPattern ? Object.keys(error.keyPattern)[0] : 'host';
+      if (duplicateField === 'host' || error.message.includes('host')) {
+        return res.status(400).json({ 
+          error: `A ${vpnType || 'server'} with this host already exists. The same IP can be used for different VPN types.` 
+        });
+      }
+    }
+    
     res.status(500).json({ error: error.message });
   }
 };
@@ -361,6 +394,23 @@ exports.updateServer = async (req, res) => {
       return res.status(404).json({ error: 'Server not found' });
     }
 
+    // Prevent changing host, port, or vpnType (these define server identity)
+    if (req.body.host && req.body.host !== server.host) {
+      return res.status(400).json({ 
+        error: 'Cannot change server host. Create a new server instead.' 
+      });
+    }
+    if (req.body.port && req.body.port !== server.port) {
+      return res.status(400).json({ 
+        error: 'Cannot change server port. Create a new server instead.' 
+      });
+    }
+    if (req.body.vpnType && req.body.vpnType !== server.vpnType) {
+      return res.status(400).json({ 
+        error: 'Cannot change server VPN type. Create a new server instead.' 
+      });
+    }
+
     if (name) server.name = name;
     if (description) server.description = description;
     if (region) server.region = region;
@@ -394,6 +444,26 @@ exports.updateServer = async (req, res) => {
     if (typeof v2rayPublicHost !== 'undefined') {
       server.v2ray = server.v2ray || {};
       server.v2ray.publicHost = v2rayPublicHost;
+    }
+
+    // Update Cloudflare proxy / TLS settings for V2Ray if provided
+    if (server.vpnType === 'v2ray') {
+      const {
+        v2rayUseTls,
+        v2rayNetwork,
+        v2rayWsPath,
+        v2raySni,
+        v2rayAlpn,
+        v2rayFingerprint,
+      } = req.body;
+
+      server.v2ray = server.v2ray || {};
+      if (typeof v2rayUseTls !== 'undefined') server.v2ray.useTls = v2rayUseTls;
+      if (v2rayNetwork) server.v2ray.network = v2rayNetwork;
+      if (v2rayWsPath) server.v2ray.wsPath = v2rayWsPath;
+      if (v2raySni) server.v2ray.sni = v2raySni;
+      if (v2rayAlpn) server.v2ray.alpn = v2rayAlpn;
+      if (v2rayFingerprint) server.v2ray.fingerprint = v2rayFingerprint;
     }
 
     await server.save();

@@ -56,8 +56,12 @@ export const authAPI = {
 
 // Devices API
 export const devicesAPI = {
-  getAll: (serverId, status) =>
-    api.get('/devices', { params: { serverId, status } }),
+  getAll: (serverId, status, options = {}) => {
+    const { page = 1, limit = 50, includeStats = false } = options;
+    return api.get('/devices', { 
+      params: { serverId, status, page, limit, includeStats: includeStats ? 'true' : 'false' } 
+    });
+  },
   getOne: (deviceId) => api.get(`/devices/${deviceId}`),
   create: (deviceData) => api.post('/devices', deviceData),
   update: (deviceId, deviceData) => api.put(`/devices/${deviceId}`, deviceData),
@@ -70,6 +74,7 @@ export const devicesAPI = {
   migrate: (deviceId, payload) => api.post(`/devices/${deviceId}/migrate`, payload),
   getHistory: (deviceId) => api.get(`/devices/${deviceId}/history`),
   getStats: (deviceId) => api.get(`/devices/${deviceId}/stats`),
+  bulkRefreshStats: (deviceIds) => api.post('/devices/bulk-stats', { deviceIds }),
 };
 
 // Plans API

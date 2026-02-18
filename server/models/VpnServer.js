@@ -16,10 +16,10 @@ const vpnServerSchema = new mongoose.Schema(
       default: 'wireguard',
       required: true,
     },
+    // Host/IP address (same IP allowed for different VPN types)
     host: {
       type: String,
       required: true,
-      unique: true,
     },
     port: {
       type: Number,
@@ -182,6 +182,29 @@ const vpnServerSchema = new mongoose.Schema(
       // Default inbound port
       inboundsPort: Number,
       version: String,
+      // Cloudflare proxy / WebSocket + TLS settings
+      useTls: {
+        type: Boolean,
+        default: false,
+      },
+      network: {
+        type: String,
+        enum: ['tcp', 'ws', 'grpc'],
+        default: 'tcp',
+      },
+      wsPath: {
+        type: String,
+        default: '/vpn',
+      },
+      sni: String,
+      alpn: {
+        type: String,
+        default: 'h2,http/1.1',
+      },
+      fingerprint: {
+        type: String,
+        default: 'chrome',
+      },
     },
     // WireGuard specific fields
     wireguard: {
@@ -232,6 +255,10 @@ const vpnServerSchema = new mongoose.Schema(
   },
   { timestamps: true }
 );
+
+// Compound index: Allow same host for different VPN types
+// but prevent duplicate host+vpnType combinations
+vpnServerSchema.index({ host: 1, vpnType: 1 }, { unique: true });
 
 // Encrypt sensitive v2ray fields at rest (if ENCRYPTION_KEY provided)
 vpnServerSchema.pre('save', function (next) {

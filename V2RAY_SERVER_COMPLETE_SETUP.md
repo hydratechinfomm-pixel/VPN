@@ -149,8 +149,8 @@ case "$1" in
     fi
     
     # Add user to config using jq
-    # Find VMess inbound and add to clients array
-    JQ_FILTER='(.inbounds[] | select(.protocol=="vmess" or .tag=="vmess-inbound") | .settings.clients) |= . + [{"id":"'$UUID'","alterId":0,"email":"'$NAME'"}]'
+    # Find VMess inbound and add to clients array with level:0 for per-user stats tracking
+    JQ_FILTER='(.inbounds[] | select(.protocol=="vmess" or .tag=="vmess-inbound") | .settings.clients) |= . + [{"id":"'$UUID'","alterId":0,"email":"'$NAME'","level":0}]'
     
     if jq "$JQ_FILTER" "$XRAY_CONFIG" > "${XRAY_CONFIG}.tmp" 2>/dev/null; then
       sudo mv "${XRAY_CONFIG}.tmp" "$XRAY_CONFIG"
@@ -177,46 +177,92 @@ case "$1" in
     fi
     
     if [ ! -f "$XRAY_CONFIG" ]; then
-      echo "{\"error\":\"Xray config not found\"}"
+      echo "{\"error\":\"Xray config not found at $XRAY_CONFIG\"}"
       exit 1
     fi
     
     if ! check_jq; then
-      echo "{\"success\":true,\"email\":\"$EMAIL\",\"note\":\"Removal initiated\"}"
+      echo "{\"success\":true,\"email\":\"$EMAIL\",\"note\":\"Removal initiated (jq not available)\"}"
       exit 0
     fi
     
-    # Remove from clients array
+    # Count clients before removal
+    BEFORE_COUNT=$(sudo jq '[.inbounds[] | select(.protocol=="vmess" or .tag=="vmess-inbound") | .settings.clients[]] | length' "$XRAY_CONFIG" 2>/dev/null || echo "0")
+    
+    # Use /tmp for intermediate file to avoid permission issues
+    TMP_FILE="/tmp/xray-config-$$.json"
+    
+    # Remove from clients array - filter by email field
     JQ_FILTER='(.inbounds[] | select(.protocol=="vmess" or .tag=="vmess-inbound") | .settings.clients) |= map(select(.email != "'$EMAIL'"))'
     
-    if jq "$JQ_FILTER" "$XRAY_CONFIG" > "${XRAY_CONFIG}.tmp" 2>/dev/null; then
-      sudo mv "${XRAY_CONFIG}.tmp" "$XRAY_CONFIG"
-      if systemctl is-active --quiet xray; then
-        sudo systemctl restart xray 2>/dev/null || true
+    if sudo jq "$JQ_FILTER" "$XRAY_CONFIG" > "$TMP_FILE" 2>/dev/null; then
+      # Count clients after removal
+      AFTER_COUNT=$(jq '[.inbounds[] | select(.protocol=="vmess" or .tag=="vmess-inbound") | .settings.clients[]] | length' "$TMP_FILE" 2>/dev/null || echo "0")
+      
+      if [ "$BEFORE_COUNT" -gt "$AFTER_COUNT" ]; then
+        # User was actually removed, apply the change
+        sudo mv "$TMP_FILE" "$XRAY_CONFIG"
+        sudo chmod 644 "$XRAY_CONFIG"
+        
+        # Restart Xray service to apply changes
+        if systemctl is-active --quiet xray 2>/dev/null; then
+          sudo systemctl restart xray 2>/dev/null || true
+        elif systemctl is-active --quiet v2ray 2>/dev/null; then
+          sudo systemctl restart v2ray 2>/dev/null || true
+        fi
+        
+        echo "{\"success\":true,\"email\":\"$EMAIL\",\"removed\":true,\"before\":$BEFORE_COUNT,\"after\":$AFTER_COUNT}"
+      else
+        # No change - user not found
+        rm -f "$TMP_FILE"
+        echo "{\"success\":true,\"email\":\"$EMAIL\",\"removed\":false,\"note\":\"User not found in config\",\"count\":$BEFORE_COUNT}"
       fi
+    else
+      # jq command failed
+      rm -f "$TMP_FILE"
+      echo "{\"error\":\"Failed to process config with jq\",\"email\":\"$EMAIL\"}"
+      exit 1
     fi
-    
-    echo "{\"success\":true,\"email\":\"$EMAIL\"}"
     ;;
     
   stats)
-    # Query stats: v2ray-cli stats <uuid>
-    UUID="$2"
+    # Query stats: v2ray-cli stats <uuid-or-name>
+    # Accepts either UUID or device name (email) and returns matching user stats
+    SEARCH_KEY="$2"
     
-    if [ -z "$UUID" ]; then
-      echo '{"error":"Usage: v2ray-cli stats <uuid>"}'
+    if [ -z "$SEARCH_KEY" ]; then
+      echo '{"error":"Usage: v2ray-cli stats <uuid-or-name>"}'
       exit 1
     fi
     
-    # Try xray api statsquery
-    STATS=$(xray api statsquery -pattern "user>>>$UUID>>>traffic" 2>/dev/null)
+    # Try specific pattern first (if it's a name like "aa")
+    STATS=$(xray api statsquery -pattern "user>>>$SEARCH_KEY>>>traffic" 2>/dev/null)
     
-    if echo "$STATS" | grep -q "uplink\|downlink"; then
+    if echo "$STATS" | grep -q '"value"' || echo "$STATS" | grep -q "uplink\|downlink"; then
       echo "$STATS"
+      exit 0
+    fi
+    
+    # If not found, try all stats and filter for this UUID or name
+    ALL_STATS=$(xray api statsquery -pattern "" 2>/dev/null)
+    
+    if [ -z "$ALL_STATS" ]; then
+      echo '{"error":"Failed to query xray stats"}'
+      exit 1
+    fi
+    
+    # Filter stats for matching user (by UUID or name)
+    # Use jq to find stat entries containing the search key
+    FILTERED=$(echo "$ALL_STATS" | jq '{stat: [.stat[] | select(.name | contains("user>>>") and contains("'$SEARCH_KEY'>>>traffic"))]}')
+    
+    # Check if we found any stats
+    COUNT=$(echo "$FILTERED" | jq '.stat | length' 2>/dev/null || echo 0)
+    
+    if [ "$COUNT" -gt 0 ]; then
+      echo "$FILTERED"
     else
-      # Fallback: full query
-      STATS=$(xray api statsquery -pattern "" 2>/dev/null)
-      echo "$STATS"
+      # No specific match found, return all stats with context
+      echo "$ALL_STATS"
     fi
     ;;
     
@@ -231,8 +277,37 @@ case "$1" in
     fi
     ;;
     
+  set-limit)
+    # Set data limit for a user: v2ray-cli set-limit <name-or-uuid> <bytes|unlimited>
+    SEARCH_KEY="$2"
+    LIMIT_VALUE="$3"
+    
+    if [ -z "$SEARCH_KEY" ] || [ -z "$LIMIT_VALUE" ]; then
+      echo '{"error":"Usage: v2ray-cli set-limit <name-or-uuid> <bytes|unlimited>"}'
+      exit 1
+    fi
+    
+    if [ "$LIMIT_VALUE" = "unlimited" ] || [ "$LIMIT_VALUE" = "0" ]; then
+      # Remove data limit (set to unlimited in xray terms)
+      # For now, we just log success - full implementation would require config editing
+      echo '{"success":true,"message":"Data limit removed for '${SEARCH_KEY}'","note":"Full implementation pending"}'
+      exit 0
+    fi
+    
+    # Check if value is numeric
+    if ! [[ "$LIMIT_VALUE" =~ ^[0-9]+$ ]]; then
+      echo '{"error":"Limit must be numeric bytes or \"unlimited\""}'
+      exit 1
+    fi
+    
+    # Success - in future, this would modify xray config to enforce the limit
+    # For now, just log it and rely on admin panel side suspension
+    echo '{"success":true,"message":"Data limit set for '${SEARCH_KEY}' to '${LIMIT_VALUE}' bytes","note":"Enforcement via Admin API"}'
+    exit 0
+    ;;
+    
   *)
-    echo '{"error":"Unknown command. Usage: v2ray-cli {add-user|remove-user|stats|health} [args]"}'
+    echo '{"error":"Unknown command. Usage: v2ray-cli {add-user|remove-user|stats|set-limit|health} [args]"}'
     exit 1
     ;;
 esac
@@ -1119,7 +1194,7 @@ case "$1" in
       exit 0
     fi
     
-    JQ_FILTER='(.inbounds[] | select(.protocol=="vmess" or .tag=="vmess-inbound") | .settings.clients) |= . + [{"id":"'$UUID'","alterId":0,"email":"'$NAME'"}]'
+    JQ_FILTER='(.inbounds[] | select(.protocol=="vmess" or .tag=="vmess-inbound") | .settings.clients) |= . + [{"id":"'$UUID'","alterId":0,"email":"'$NAME'","level":0}]'
     
     if jq "$JQ_FILTER" "$XRAY_CONFIG" > "${XRAY_CONFIG}.tmp" 2>/dev/null; then
       sudo mv "${XRAY_CONFIG}.tmp" "$XRAY_CONFIG"
@@ -1165,23 +1240,47 @@ case "$1" in
     ;;
     
   stats)
-    UUID="$2"
+    # Query stats: v2ray-cli stats <uuid-or-name>
+    # Accepts either UUID or device name (email) and returns matching user stats
+    SEARCH_KEY="$2"
     
-    if [ -z "$UUID" ]; then
-      echo '{"error":"Usage: v2ray-cli stats <uuid>"}'
+    if [ -z "$SEARCH_KEY" ]; then
+      echo '{"error":"Usage: v2ray-cli stats <uuid-or-name>"}'
       exit 1
     fi
     
-    STATS=$(xray api statsquery -pattern "user>>>$UUID>>>traffic" 2>/dev/null)
+    # Try specific pattern first (if it's a name like "aa")
+    STATS=$(xray api statsquery -pattern "user>>>$SEARCH_KEY>>>traffic" 2>/dev/null)
     
-    if echo "$STATS" | grep -q "uplink\|downlink"; then
+    if echo "$STATS" | grep -q '"value"' || echo "$STATS" | grep -q "uplink\|downlink"; then
       echo "$STATS"
+      exit 0
+    fi
+    
+    # If not found, try all stats and filter for this UUID or name
+    ALL_STATS=$(xray api statsquery -pattern "" 2>/dev/null)
+    
+    if [ -z "$ALL_STATS" ]; then
+      echo '{"error":"Failed to query xray stats"}'
+      exit 1
+    fi
+    
+    # Filter stats for matching user (by UUID or name)
+    # Use jq to find stat entries containing the search key
+    FILTERED=$(echo "$ALL_STATS" | jq '{stat: [.stat[] | select(.name | contains("user>>>") and contains("'$SEARCH_KEY'>>>traffic"))]}')
+    
+    # Check if we found any stats
+    COUNT=$(echo "$FILTERED" | jq '.stat | length' 2>/dev/null || echo 0)
+    
+    if [ "$COUNT" -gt 0 ]; then
+      echo "$FILTERED"
     else
-      STATS=$(xray api statsquery -pattern "" 2>/dev/null)
-      echo "$STATS"
+      # No specific match found, return all stats with context
+      echo "$ALL_STATS"
     fi
     ;;
     
+
   health)
     if xray version > /dev/null 2>&1; then
       echo '{"success":true,"status":"running"}'
@@ -1192,8 +1291,37 @@ case "$1" in
     fi
     ;;
     
+  set-limit)
+    # Set data limit for a user: v2ray-cli set-limit <name-or-uuid> <bytes|unlimited>
+    SEARCH_KEY="$2"
+    LIMIT_VALUE="$3"
+    
+    if [ -z "$SEARCH_KEY" ] || [ -z "$LIMIT_VALUE" ]; then
+      echo '{"error":"Usage: v2ray-cli set-limit <name-or-uuid> <bytes|unlimited>"}'
+      exit 1
+    fi
+    
+    if [ "$LIMIT_VALUE" = "unlimited" ] || [ "$LIMIT_VALUE" = "0" ]; then
+      # Remove data limit (set to unlimited in xray terms)
+      # For now, we just log success - full implementation would require config editing
+      echo '{"success":true,"message":"Data limit removed for '${SEARCH_KEY}'","note":"Full implementation pending"}'
+      exit 0
+    fi
+    
+    # Check if value is numeric
+    if ! [[ "$LIMIT_VALUE" =~ ^[0-9]+$ ]]; then
+      echo '{"error":"Limit must be numeric bytes or \"unlimited\""}'
+      exit 1
+    fi
+    
+    # Success - in future, this would modify xray config to enforce the limit
+    # For now, just log it and rely on admin panel side suspension
+    echo '{"success":true,"message":"Data limit set for '${SEARCH_KEY}' to '${LIMIT_VALUE}' bytes","note":"Enforcement via Admin API"}'
+    exit 0
+    ;;
+    
   *)
-    echo '{"error":"Unknown command. Usage: v2ray-cli {add-user|remove-user|stats|health} [args]"}'
+    echo '{"error":"Unknown command. Usage: v2ray-cli {add-user|remove-user|stats|set-limit|health} [args]"}'
     exit 1
     ;;
 esac

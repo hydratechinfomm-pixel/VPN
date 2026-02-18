@@ -122,12 +122,22 @@ class V2rayService extends VpnService {
         const parsed = this.parseV2rayCliOutput(out);
         const ensured = await this.ensureUserInConfig(parsed.userId, name);
         
-        // Generate VMess client config with server details
+        // Generate VMess client config with server details and CF proxy settings
+        const vmessOptions = {
+          useTls: this.server.v2ray?.useTls || false,
+          network: this.server.v2ray?.network || 'tcp',
+          wsPath: this.server.v2ray?.wsPath || '/vpn',
+          sni: this.server.v2ray?.sni || this.server.v2ray?.publicHost || this.server.host,
+          alpn: this.server.v2ray?.alpn || 'h2,http/1.1',
+          fingerprint: this.server.v2ray?.fingerprint || 'chrome',
+        };
+        
         const vmessConfig = this.generateVmessClientConfig(
           parsed.userId,
           name || 'device',
-          this.server.host,
-          this.server.port || 10000
+          this.server.v2ray?.publicHost || this.server.host,
+          this.server.port || 10000,
+          vmessOptions
         );
         
         return { 
@@ -148,12 +158,22 @@ class V2rayService extends VpnService {
             const parsed2 = this.parseV2rayCliOutput(out2);
             const ensured2 = await this.ensureUserInConfig(parsed2.userId, name);
             
-            // Generate VMess client config with server details
+            // Generate VMess client config with server details and CF proxy settings
+            const vmessOptions = {
+              useTls: this.server.v2ray?.useTls || false,
+              network: this.server.v2ray?.network || 'tcp',
+              wsPath: this.server.v2ray?.wsPath || '/vpn',
+              sni: this.server.v2ray?.sni || this.server.v2ray?.publicHost || this.server.host,
+              alpn: this.server.v2ray?.alpn || 'h2,http/1.1',
+              fingerprint: this.server.v2ray?.fingerprint || 'chrome',
+            };
+            
             const vmessConfig = this.generateVmessClientConfig(
               parsed2.userId,
               name || 'device',
-              this.server.host,
-              this.server.port || 10000
+              this.server.v2ray?.publicHost || this.server.host,
+              this.server.port || 10000,
+              vmessOptions
             );
             
             return { 
@@ -219,20 +239,49 @@ class V2rayService extends VpnService {
 
   /**
    * Generate VMess client configuration URL
-   * Returns vmess://base64({"v":2,"ps":"name","add":"host","port":port,"id":"uuid","alterId":0,"net":"tcp","type":"none"})
+   * Returns vmess://base64 with proper CF proxy support (WebSocket+TLS)
+   * @param {string} uuid - User UUID
+   * @param {string} name - Device name
+   * @param {string} host - Server host/domain
+   * @param {number} port - Server port
+   * @param {object} options - Additional config (useTls, network, wsPath, sni, alpn, fingerprint)
    */
-  generateVmessClientConfig(uuid, name, host, port = 10000) {
+  generateVmessClientConfig(uuid, name, host, port = 10000, options = {}) {
     try {
       const config = {
-        v: 2,
+        v: '2',
         ps: name || 'device',
         add: host,
-        port: Number(port),
+        port: String(port),
         id: uuid,
-        alterId: 0,
-        net: 'tcp',
-        type: 'none'
+        aid: '0',
+        net: options.network || 'tcp',
+        type: 'none',
+        host: host,
       };
+
+      // Add TLS settings if enabled (Cloudflare proxy)
+      if (options.useTls) {
+        config.tls = 'tls';
+        config.sni = options.sni || host;
+        config.alpn = options.alpn || 'h2,http/1.1';
+        config.fp = options.fingerprint || 'chrome';
+      }
+
+      // Add WebSocket settings if network is ws
+      if (config.net === 'ws') {
+        config.path = options.wsPath || '/vpn';
+      }
+
+      // Add optional fields for better compatibility
+      config.mode = '';
+      config.serviceName = 'none';
+      config.fragment = '';
+      config.deviceID = '';
+      config.seed = '';
+      config.headerType = '';
+      config.extra = '';
+
       const b64 = Buffer.from(JSON.stringify(config)).toString('base64');
       return `vmess://${b64}`;
     } catch (err) {
@@ -272,10 +321,12 @@ class V2rayService extends VpnService {
       const exists = inbound.settings.clients.some((c) => c && String(c.id) === String(userId));
       if (exists) return { changed: false, reason: 'already-exists', configPath };
 
+      // Add client with level:0 to enable per-user stats tracking
       inbound.settings.clients.push({
         id: String(userId),
         alterId: 0,
         email: name || `device-${String(userId).slice(0, 8)}`,
+        level: 0,
       });
 
       const updated = JSON.stringify(config, null, 2);
@@ -343,27 +394,43 @@ class V2rayService extends VpnService {
 
   async removeUser(userIdentifier) {
     if (!userIdentifier) throw new Error('User id or name required');
-    if (this.accessMethod === 'ssh') {
-      // userIdentifier can be UUID or device name
-      // v2ray-cli remove-user expects the email/device name stored in the client config
-      const cmd = `v2ray-cli remove-user "${userIdentifier}"`;
+    const callApiRemoval = async () => {
       try {
-        const result = await this.executor.executeCommand(cmd);
+        await this.makeRequest('DELETE', `users/${userIdentifier}`);
         return { success: true, removed: userIdentifier };
       } catch (err) {
-        // Log but don't fail - the device is still being deleted from panel
-        console.warn(`[V2rayService] Failed to remove v2ray user ${userIdentifier} via SSH: ${err.message}`);
-        return { success: true, removed: userIdentifier, warning: 'SSH removal failed, but continuing' };
+        console.warn(`[V2rayService] Failed to remove v2ray user ${userIdentifier} via API: ${err.message}`);
+        return { success: true, removed: userIdentifier, warning: 'API removal failed, but continuing' };
+      }
+    };
+
+    if (this.accessMethod === 'ssh') {
+      const hasCredentials = this.executor && this.executor.sshConfig &&
+        (this.executor.sshConfig.privateKey || this.executor.sshConfig.password);
+      if (!hasCredentials) {
+        console.warn('[V2rayService] SSH removal requested but no SSH credentials configured, falling back to API');
+        return callApiRemoval();
+      }
+
+      const cmd = `v2ray-cli remove-user "${userIdentifier}"`;
+      console.log(`[V2rayService] Executing SSH command: ${cmd}`);
+      try {
+        const result = await this.executor.executeCommand(cmd);
+        console.log(`[V2rayService] SSH command output:`, result);
+        return { success: true, removed: userIdentifier, output: result };
+      } catch (err) {
+        const message = err?.message || '';
+        console.error(`[V2rayService] SSH command failed for user "${userIdentifier}":`, message);
+        if (message.includes('SSH authentication credentials not provided')) {
+          console.warn('[V2rayService] Detected missing SSH credentials, attempting API fallback');
+          return callApiRemoval();
+        }
+        console.warn(`[V2rayService] Continuing with deletion despite SSH error`);
+        return { success: true, removed: userIdentifier, warning: 'SSH removal failed, but continuing', error: message };
       }
     }
 
-    try {
-      await this.makeRequest('DELETE', `users/${userIdentifier}`);
-      return { success: true, removed: userIdentifier };
-    } catch (err) {
-      console.warn(`[V2rayService] Failed to remove v2ray user ${userIdentifier} via API: ${err.message}`);
-      return { success: true, removed: userIdentifier, warning: 'API removal failed, but continuing' };
-    }
+    return callApiRemoval();
   }
 
   async getUserConfig(userId) {
@@ -387,32 +454,56 @@ class V2rayService extends VpnService {
 
   async getUserStats(userId) {
     if (!userId) throw new Error('User id required');
-    if (this.accessMethod === 'ssh') {
+
+    console.log(`[V2rayService.getUserStats] Fetching stats for user: ${userId}, accessMethod: ${this.accessMethod}`);
+
+    // Check if SSH credentials are available (even if not primary method)
+    const hasSSHCredentials = this.executor?.sshConfig && 
+      (this.executor.sshConfig.privateKey || this.executor.sshConfig.password);
+
+    if (this.accessMethod === 'ssh' || (!this.baseUrl && hasSSHCredentials)) {
+      // Initialize executor if not already done
+      if (!this.executor) {
+        this.executor = new SSHExecutor(this.server);
+      }
+
+      console.log(`[V2rayService.getUserStats] Using SSH method for user ${userId}`);
+
+      // 1) Try v2ray-cli helper
       const cmd = `v2ray-cli stats ${userId}`;
       let helperOut = null;
       try {
         helperOut = await this.executor.executeCommand(cmd);
+        console.log(`[V2rayService.getUserStats] v2ray-cli response:`, helperOut?.substring(0, 200));
       } catch (err) {
-        // ignore, we'll try API fallback below
+        console.log(`[V2rayService.getUserStats] v2ray-cli  failed:`, err.message);
       }
 
       // If helper produced output, try to interpret it
       if (helperOut) {
         try {
           const parsedOut = JSON.parse(helperOut);
-          if (parsedOut && ((typeof parsedOut.bytesUsed === 'number' && parsedOut.bytesUsed > 0) || parsedOut.uplink || parsedOut.downlink)) return parsedOut;
-          // otherwise ignore and fall through to API fallback
+          if (parsedOut && ((typeof parsedOut.bytesUsed === 'number' && parsedOut.bytesUsed > 0) || parsedOut.uplink || parsedOut.downlink)) {
+            console.log(`[V2rayService.getUserStats] Got stats from v2ray-cli:`, parsedOut);
+            return parsedOut;
+          }
         } catch (e) {
           const numeric = Number(helperOut) || 0;
-          if (numeric > 0) return { bytesUsed: numeric };
+          if (numeric > 0) {
+            console.log(`[V2rayService.getUserStats] Got numeric stats: ${numeric}`);
+            return { bytesUsed: numeric };
+          }
         }
       }
 
-      // SSH fallback: query the local xray/v2ray management API via SSH and parse stat entries
+      // 2) SSH fallback: query xray API via SSH
       try {
         // First try exact pattern
         const apiCmd = `xray api statsquery -pattern "user>>>${userId}>>>traffic"`;
+        console.log(`[V2rayService.getUserStats] Executing: ${apiCmd}`);
         const out2 = await this.executor.executeCommand(apiCmd);
+        console.log(`[V2rayService.getUserStats] xray api response length: ${out2?.length}`);
+        
         try {
           const parsed = JSON.parse(out2);
           if (Array.isArray(parsed.stat) && parsed.stat.length > 0) {
@@ -424,51 +515,73 @@ class V2rayService extends VpnService {
               if (s.name.endsWith('downlink')) downlink = Number(s.value) || 0;
             }
             const total = uplink + downlink;
+            console.log(`[V2rayService.getUserStats] Stats from specific pattern: uplink=${uplink}, downlink=${downlink}, total=${total}`);
             return { userId, bytesUsed: total, uplink, downlink };
+          } else {
+            console.log(`[V2rayService.getUserStats] Specific pattern returned empty or invalid stat array`);
           }
         } catch (e2) {
-          // ignore parse error and continue to broader query
+          console.log(`[V2rayService.getUserStats] Failed to parse specific pattern response:`, e2.message);
         }
 
-        // If specific pattern returned nothing, request all stats and search for matching entries
+        // If specific pattern returned nothing, request all stats
         try {
+          console.log(`[V2rayService.getUserStats] Trying all stats query...`);
           const outAll = await this.executor.executeCommand('xray api statsquery -pattern ""');
           const parsedAll = JSON.parse(outAll);
           if (Array.isArray(parsedAll.stat)) {
+            console.log(`[V2rayService.getUserStats] Total stats entries: ${parsedAll.stat.length}`);
             let uplink = 0;
             let downlink = 0;
+            let foundMatch = false;
             for (const s of parsedAll.stat) {
               if (!s || !s.name) continue;
-              if (s.name.includes(`user>>>${userId}>>>traffic`) ) {
+              if (s.name.includes(`user>>>${userId}>>>traffic`)) {
+                console.log(`[V2rayService.getUserStats] Found matching stat: ${s.name} = ${s.value}`);
+                foundMatch = true;
                 if (s.name.endsWith('uplink')) uplink = Number(s.value) || 0;
                 if (s.name.endsWith('downlink')) downlink = Number(s.value) || 0;
               }
             }
             const total = uplink + downlink;
-            // Return stats even if zero (user is new/no traffic yet)
+            if (foundMatch || parsedAll.stat.length > 0) {
+              console.log(`[V2rayService.getUserStats] Final stats: uplink=${uplink}, downlink=${downlink}, total=${total}`);
+            } else {
+              console.log(`[V2rayService.getUserStats] No matching stats found for user ${userId}`);
+            }
             return { userId, bytesUsed: total, uplink, downlink };
           }
         } catch (e3) {
-          // ignore and continue below
+          console.log(`[V2rayService.getUserStats] All stats query failed:`, e3.message);
         }
       } catch (err2) {
-        // ignore and continue below
+        console.error(`[V2rayService.getUserStats] SSH xray api query failed:`, err2.message);
       }
 
-      // If all attempts returned no data, return zero stats instead of throwing error
-      // This is normal for new users without traffic
-      return { userId, bytesUsed: 0, uplink: 0, downlink: 0 };
+      // If SSH method failed and API is available, try API as fallback
+      if (this.baseUrl) {
+        console.log(`[V2rayService.getUserStats] SSH failed, trying API fallback...`);
+      } else {
+        console.log(`[V2rayService.getUserStats] No more methods available, returning zero stats`);
+        return { userId, bytesUsed: 0, uplink: 0, downlink: 0 };
+      }
     }
 
+    // Try API method
     try {
+      console.log(`[V2rayService.getUserStats] Using HTTP API method, baseUrl: ${this.baseUrl}`);
       const resp = await this.makeRequest('GET', `metrics/transfer`);
+      
       // Common API shapes:
       // 1) { bytesTransferredByUserId: { [userId]: N } }
       // 2) { stat: [ { name: 'user>>><id>>>traffic>>>uplink', value: N }, ... ] }
       const bytesFromMap = resp?.bytesTransferredByUserId?.[userId];
-      if (typeof bytesFromMap === 'number') return { userId, bytesUsed: bytesFromMap };
+      if (typeof bytesFromMap === 'number') {
+        console.log(`[V2rayService.getUserStats] Got stats from API: ${bytesFromMap}`);
+        return { userId, bytesUsed: bytesFromMap };
+      }
 
-      // Fallback: parse stat array entries (as returned by xray's statsquery)
+      // Fallback: parse stat array entries
       if (Array.isArray(resp?.stat)) {
         const patternUplink = `user>>>${userId}>>>traffic>>>uplink`;
         const patternDown = `user>>>${userId}>>>traffic>>>downlink`;
@@ -480,13 +593,31 @@ class V2rayService extends VpnService {
           if (s.name === patternDown) downlink = Number(s.value) || 0;
         }
         const total = uplink + downlink;
+        console.log(`[V2rayService.getUserStats] Got stats from API stat array: uplink=${uplink}, downlink=${downlink}`);
         return { userId, bytesUsed: total, uplink, downlink };
       }
 
-      // Nothing matched; return zero
+      console.log(`[V2rayService.getUserStats] API returned no matching stats`);
       return { userId, bytesUsed: 0 };
     } catch (err) {
-      throw new Error(`Failed to get v2ray user stats via API: ${err.message}`);
+      console.error(`[V2rayService.getUserStats] API method failed:`, err.message);
+      
+      // If API was primary method and SSH is available, try SSH as last resort
+      if (this.accessMethod === 'api' && hasSSHCredentials) {
+        console.log(`[V2rayService.getUserStats] API failed, trying SSH as last resort...`);
+        const origMethod = this.accessMethod;
+        this.accessMethod = 'ssh';
+        try {
+          const result = await this.getUserStats(userId);
+          this.accessMethod = origMethod;
+          return result;
+        } catch (sshErr) {
+          this.accessMethod = origMethod;
+          console.error(`[V2rayService.getUserStats] SSH fallback also failed:`, sshErr.message);
+        }
+      }
+      
+      throw new Error(`Failed to get v2ray user stats: ${err.message}`);
     }
   }
 
@@ -533,14 +664,60 @@ class V2rayService extends VpnService {
 
   // Get server-wide stats (metrics/transfer)
   async getServerStats() {
-    if (this.accessMethod === 'ssh') {
-      return {};
+    console.log(`[V2rayService.getServerStats] Fetching server stats, accessMethod: ${this.accessMethod}`);
+    
+    if (this.accessMethod === 'ssh' && this.executor) {
+      // Query all stats via SSH and parse them
+      try {
+        const out = await this.executor.executeCommand('xray api statsquery -pattern ""');
+        const parsed = JSON.parse(out);
+        
+        if (!Array.isArray(parsed.stat)) {
+          console.warn('[V2rayService.getServerStats] SSH query returned invalid format');
+          return {};
+        }
+        
+        console.log(`[V2rayService.getServerStats] SSH query returned ${parsed.stat.length} stat entries`);
+        
+        // Build bytesTransferredByUserId map from stat entries
+        // Stats are in format: "user>>>UUID>>>traffic>>>uplink" and "user>>>UUID>>>traffic>>>downlink"
+        const bytesTransferredByUserId = {};
+        
+        for (const s of parsed.stat) {
+          if (!s || !s.name) continue;
+          
+          // Match user stats: user>>>IDENTIFIER>>>traffic>>>uplink/downlink
+          const match = s.name.match(/^user>>>([^>]+)>>>traffic>>>(uplink|downlink)$/);
+          if (!match) continue;
+          
+          const userId = match[1];
+          const direction = match[2];
+          const value = Number(s.value) || 0;
+          
+          if (!bytesTransferredByUserId[userId]) {
+            bytesTransferredByUserId[userId] = 0;
+          }
+          
+          bytesTransferredByUserId[userId] += value;
+          console.log(`[V2rayService.getServerStats] Found user stat: ${userId} ${direction}=${value}`);
+        }
+        
+        console.log(`[V2rayService.getServerStats] Built stats for ${Object.keys(bytesTransferredByUserId).length} users`);
+        return { bytesTransferredByUserId };
+      } catch (err) {
+        console.error(`[V2rayService.getServerStats] SSH query failed:`, err.message);
+        return {};
+      }
     }
+    
+    // API method fallback
     try {
       const resp = await this.makeRequest('GET', 'metrics/transfer');
+      console.log(`[V2rayService.getServerStats] API query successful`);
       return resp || {};
     } catch (err) {
-      throw new Error(`Failed to get v2ray server stats: ${err.message}`);
+      console.error(`[V2rayService.getServerStats] API query failed:`, err.message);
+      return {};
     }
   }
 }

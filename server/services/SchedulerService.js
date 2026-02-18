@@ -214,8 +214,14 @@ exports.scheduleV2rayUsageSync = () => {
           let syncCount = 0;
           for (const device of deviceList) {
             const v2user = device.v2rayUser;
-            if (!v2user || !v2user.userId) continue;
-            const bytesUsed = bytesTransferred[v2user.userId] || 0;
+            if (!v2user) continue;
+            
+            // V2Ray stats are keyed by device name (email), not UUID
+            // Try device name first, then fall back to UUID
+            const statsKey = v2user.name || v2user.userId;
+            const bytesUsed = bytesTransferred[statsKey] || bytesTransferred[v2user.userId] || 0;
+            
+            console.log(`[V2Ray Usage Sync] Device ${device.name}: statsKey=${statsKey}, bytesUsed=${bytesUsed}`);
 
             device.usage.bytesReceived = bytesUsed;
             device.usage.bytesSent = 0;
@@ -319,8 +325,11 @@ exports.scheduleDeviceExpiration = () => {
             } else {
               const v2Service = new (require('../services/V2rayService'))(server);
               const v2user = await require('../models/V2rayUser').findById(device.v2rayUser);
-              if (v2user && v2user.userId) {
-                await v2Service.setDataLimit(v2user.userId, 0);
+              if (v2user) {
+                // V2Ray expects device name (email) not UUID for suspension
+                const suspendIdentifier = v2user.name || v2user.userId;
+                console.log(`[Device Expiration] Suspending V2Ray user: device=${device.name}, identifier=${suspendIdentifier}`);
+                await v2Service.setDataLimit(suspendIdentifier, 0);
                 device.dataLimit = { bytes: 1, isEnabled: true };
                 await device.save();
                 console.log(`[Device Expiration] Successfully paused V2Ray user for device ${device.name}`);
@@ -452,8 +461,11 @@ exports.schedulePlanLimitEnforcement = () => {
               } else {
                 const v2Service = new (require('../services/V2rayService'))(server);
                 const v2user = await require('../models/V2rayUser').findById(device.v2rayUser);
-                if (v2user && v2user.userId) {
-                  await v2Service.setDataLimit(v2user.userId, 0);
+                if (v2user) {
+                  // V2Ray expects device name (email) not UUID for suspension
+                  const suspendIdentifier = v2user.name || v2user.userId;
+                  console.log(`[Plan Enforcement] Suspending V2Ray user: device=${device.name}, identifier=${suspendIdentifier}, bytesUsed=${(device.usage.bytesSent || 0) + (device.usage.bytesReceived || 0)}`);
+                  await v2Service.setDataLimit(suspendIdentifier, 0);
                   console.log(`[Plan Enforcement] Successfully paused V2Ray user for device ${device.name}`);
                   // Update V2rayUser status
                   v2user.status = 'SUSPENDED';

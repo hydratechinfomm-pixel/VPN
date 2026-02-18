@@ -13,6 +13,8 @@ router.get('/history', authorizePanelAdmin, deviceHistoryController.getAllHistor
 // Device CRUD
 router.post('/', deviceController.createDevice);
 router.get('/', deviceController.getDevices);
+// Bulk stats refresh (for performance)
+router.post('/bulk-stats', deviceController.bulkRefreshStats);
 // Get per-device network stats
 router.get('/:deviceId/stats', deviceController.getDeviceStats);
 router.get('/:deviceId', deviceController.getDevice);

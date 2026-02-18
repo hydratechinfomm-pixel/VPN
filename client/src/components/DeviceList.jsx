@@ -20,30 +20,9 @@ const DeviceList = ({ devices, onEdit, onDelete, onDownloadConfig, onMigrate }) 
     setLocalDevices(devices || []);
   }, [devices]);
 
-  // Auto-fetch per-device stats for V2Ray devices that show zero usage
-  useEffect(() => {
-    const fetchMissingStats = async () => {
-      for (const d of localDevices) {
-        const totalUsage = d.totalBytesUsed || ((d.usage?.bytesSent || 0) + (d.usage?.bytesReceived || 0));
-        if (d.server?.vpnType === 'v2ray' && (!totalUsage || totalUsage === 0) && !loadingStats[d._id]) {
-          setLoadingStats(prev => ({ ...prev, [d._id]: true }));
-          try {
-            const resp = await devicesAPI.getStats(d._id);
-            const s = resp?.stats || resp;
-            const bytes = s?.bytesUsed ?? (s?.uplink && s?.downlink ? (s.uplink + s.downlink) : 0);
-            setLocalDevices(prev => prev.map(x => x._id === d._id ? { ...x, usage: { bytesSent: s?.uplink || 0, bytesReceived: s?.downlink || bytes }, totalBytesUsed: bytes } : x));
-          } catch (err) {
-            // ignore per-device fetch errors
-          } finally {
-            setLoadingStats(prev => ({ ...prev, [d._id]: false }));
-          }
-        }
-      }
-    };
-
-    if (localDevices && localDevices.length) fetchMissingStats();
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [localDevices]);
+  // REMOVED: Auto-fetch per-device stats (causes performance issues)
+  // Stats are now loaded via includeStats=true param on initial fetch
+  // or can be refreshed on-demand
 
   const formatBytes = (bytes) => {
     if (!bytes || bytes === 0) return '0 B';
@@ -442,4 +421,12 @@ const DeviceList = ({ devices, onEdit, onDelete, onDownloadConfig, onMigrate }) 
   );
 };
 
-export default DeviceList;
+// Memoize to prevent unnecessary re-renders
+export default React.memo(DeviceList, (prevProps, nextProps) => {
+  // Only re-render if devices array changed
+  return prevProps.devices === nextProps.devices &&
+         prevProps.onEdit === nextProps.onEdit &&
+         prevProps.onDelete === nextProps.onDelete &&
+         prevProps.onDownloadConfig === nextProps.onDownloadConfig &&
+         prevProps.onMigrate === nextProps.onMigrate;
+});

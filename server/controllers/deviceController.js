@@ -502,7 +502,7 @@ async function createV2rayDevice(req, res, server, vpnService, requesterId, devi
  */
 exports.getDevices = async (req, res) => {
   try {
-    const { serverId, status } = req.query;
+    const { serverId, status, includeStats, page = 1, limit = 50 } = req.query;
     const userId = req.userId;
     const user = await User.findById(userId);
 
@@ -520,12 +520,18 @@ exports.getDevices = async (req, res) => {
     }
     // Admin and staffs see all devices (no user filter)
 
+    // Pagination
+    const skip = (parseInt(page) - 1) * parseInt(limit);
+    const total = await Device.countDocuments(query);
+
     const devices = await Device.find(query)
       .populate('server', 'name host region vpnType')
       .populate('plan', 'name dataLimit')
       .populate('accessKey', 'accessKeyId accessUrl name')
       .populate('v2rayUser', 'userId name')
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(parseInt(limit));
 
     // For Outline devices without accessKey set, try to find and link them
     for (const device of devices) {
@@ -552,17 +558,34 @@ exports.getDevices = async (req, res) => {
       }
     }
 
-    // Refresh devices after potential linking
-    const refreshedDevices = await Device.find(query)
-      .populate('server', 'name host region vpnType')
-      .populate('plan', 'name dataLimit')
-      .populate('accessKey', 'accessKeyId accessUrl name')
-      .populate('v2rayUser', 'userId name')
-      .sort({ createdAt: -1 });
+    // Skip stats fetching if not requested (for faster initial load)
+    if (includeStats !== 'true') {
+      // Return devices without fetching stats from servers
+      const devicesList = devices.map(device => {
+        const deviceObj = device.toObject();
+        const effectiveLimit = deviceObj.dataLimit?.bytes || deviceObj.plan?.dataLimit?.bytes;
+        const limitSource = deviceObj.dataLimit?.bytes ? 'device-override' : 'plan-limit';
+        deviceObj.limitInfo = {
+          effectiveLimit,
+          limitSource,
+          hasDeviceOverride: !!deviceObj.dataLimit?.bytes,
+          hasPlanLimit: !!deviceObj.plan?.dataLimit?.bytes,
+        };
+        return deviceObj;
+      });
+      return res.json({ 
+        devices: devicesList, 
+        total,
+        page: parseInt(page),
+        limit: parseInt(limit),
+        pages: Math.ceil(total / parseInt(limit)),
+        statsIncluded: false
+      });
+    }
 
-    // For each Outline device, fetch usage from server
+    // Fetch stats in parallel (not sequentially)
     const devicesWithUsage = await Promise.all(
-      refreshedDevices.map(async (device) => {
+      devices.map(async (device) => {
         const deviceObj = device.toObject();
         
         // If it's an Outline device and has an accessKey, fetch usage from server
@@ -650,8 +673,12 @@ exports.getDevices = async (req, res) => {
     );
 
     res.json({
-      total: devicesWithUsage.length,
       devices: devicesWithUsage,
+      total,
+      page: parseInt(page),
+      limit: parseInt(limit),
+      pages: Math.ceil(total / parseInt(limit)),
+      statsIncluded: true
     });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -717,7 +744,10 @@ exports.getDeviceStats = async (req, res) => {
 
       const vpnService = getVpnService(server);
       try {
-        const stats = await vpnService.getUserStats(device.v2rayUser.userId);
+        // Pass device name (email) to getUserStats, not the UUID
+        // v2ray-cli stats uses the device name to lookup user-specific stats
+        const statsIdentifier = device.v2rayUser.name || device.v2rayUser.userId;
+        const stats = await vpnService.getUserStats(statsIdentifier);
         return res.json({ deviceId: device._id, stats });
       } catch (err) {
         // Try a raw SSH fallback for diagnostics if SSH credentials exist on the server
@@ -726,7 +756,7 @@ exports.getDeviceStats = async (req, res) => {
           if (sshCfg) {
             const exec = new SSHExecutor(server);
             try {
-              const raw = await exec.executeCommand(`xray api statsquery -pattern "user>>>${device.v2rayUser.userId}>>>traffic"`);
+              const raw = await exec.executeCommand(`xray api statsquery -pattern "user>>>${device.v2rayUser.name}>>>traffic"`);
               let parsed = null;
               try { parsed = JSON.parse(raw); } catch (e) { /* non-json */ }
               if (parsed && Array.isArray(parsed.stat) && parsed.stat.length) {
@@ -813,6 +843,107 @@ exports.getDeviceStats = async (req, res) => {
     return res.status(400).json({ error: 'Unsupported VPN type for stats' });
   } catch (err) {
     return res.status(500).json({ error: err.message });
+  }
+};
+
+/**
+ * Bulk refresh stats for multiple devices (optimized for performance)
+ * POST /devices/bulk-stats
+ * Body: { deviceIds: ['id1', 'id2', ...] }
+ */
+exports.bulkRefreshStats = async (req, res) => {
+  try {
+    const { deviceIds } = req.body;
+    const userId = req.userId;
+
+    if (!Array.isArray(deviceIds) || deviceIds.length === 0) {
+      return res.status(400).json({ error: 'deviceIds array is required' });
+    }
+
+    const user = await User.findById(userId);
+    const isAdmin = user.role?.toLowerCase() === 'admin';
+    const isStaff = user.role?.toLowerCase() === 'staff';
+
+    // Fetch all requested devices
+    const devices = await Device.find({ _id: { $in: deviceIds } })
+      .populate('server')
+      .populate('accessKey', 'accessKeyId')
+      .populate('v2rayUser', 'userId name');
+
+    // Authorization check
+    const authorizedDevices = devices.filter(device => {
+      if (isAdmin || isStaff) return true;
+      return device.user && device.user.toString() === userId;
+    });
+
+    // Group devices by server for batch processing
+    const devicesByServer = {};
+    for (const device of authorizedDevices) {
+      const serverId = device.server?._id?.toString();
+      if (!serverId) continue;
+      if (!devicesByServer[serverId]) {
+        devicesByServer[serverId] = [];
+      }
+      devicesByServer[serverId].push(device);
+    }
+
+    // Fetch stats in parallel per server
+    const statsResults = await Promise.allSettled(
+      Object.entries(devicesByServer).map(async ([serverId, serverDevices]) => {
+        const server = await VpnServer.findById(serverId)
+          .select('+outline.adminAccessKey +outline.ssh.privateKey +v2ray.ssh.privateKey');
+        
+        if (!server) return [];
+
+        const vpnService = getVpnService(server);
+
+        // Process devices in parallel for this server
+        const deviceStats = await Promise.allSettled(
+          serverDevices.map(async (device) => {
+            try {
+              let stats = null;
+
+              if (server.vpnType === 'v2ray' && device.v2rayUser) {
+                // Pass device name (email) to getUserStats, not the UUID
+                // v2ray-cli stats uses the device name to lookup user-specific stats
+                stats = await vpnService.getUserStats(device.v2rayUser.name || device.v2rayUser.userId);
+              } else if (server.vpnType === 'outline' && device.accessKey?.accessKeyId) {
+                const metrics = await vpnService.makeRequest('GET', 'metrics/transfer');
+                const bytes = metrics?.bytesTransferredByUserId?.[device.accessKey.accessKeyId] || 0;
+                stats = { userId: device.accessKey.accessKeyId, bytesUsed: bytes };
+              }
+
+              return {
+                deviceId: device._id.toString(),
+                stats: stats || { bytesUsed: 0 },
+                success: true
+              };
+            } catch (err) {
+              return {
+                deviceId: device._id.toString(),
+                error: err.message,
+                success: false
+              };
+            }
+          })
+        );
+
+        return deviceStats.map(result => result.status === 'fulfilled' ? result.value : result.reason);
+      })
+    );
+
+    // Flatten results
+    const allStats = statsResults
+      .filter(r => r.status === 'fulfilled')
+      .flatMap(r => r.value);
+
+    res.json({
+      total: deviceIds.length,
+      processed: allStats.length,
+      stats: allStats
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 };
 
@@ -1160,7 +1291,10 @@ exports.deleteDevice = async (req, res) => {
     const { deviceId } = req.params;
     const userId = req.userId;
 
-    const device = await Device.findById(deviceId).populate('server');
+    const device = await Device.findById(deviceId).populate({
+      path: 'server',
+      select: '+outline.adminAccessKey +outline.ssh.privateKey +v2ray.apiToken +v2ray.ssh.privateKey',
+    });
     if (!device) {
       return res.status(404).json({ error: 'Device not found' });
     }
@@ -1198,20 +1332,33 @@ exports.deleteDevice = async (req, res) => {
         }
       }
     } else if (server.vpnType === 'v2ray') {
-      // Remove user from V2Ray/Xray server
-      if (device.v2rayUser) {
+      if (!device.v2rayUser) {
+        return res.status(400).json({ error: 'V2Ray device missing user record' });
+      }
+
+      const v2rayUserDoc = await V2rayUser.findById(device.v2rayUser);
+      if (!v2rayUserDoc) {
+        return res.status(400).json({ error: 'V2Ray user record not found' });
+      }
+
+      // v2ray-cli remove-user expects device NAME (email), not UUID
+      const v2rayIdentifier = v2rayUserDoc.name || v2rayUserDoc.userId;
+      console.log(`[deleteDevice] V2Ray user info: name="${v2rayUserDoc.name}", userId="${v2rayUserDoc.userId}", identifier="${v2rayIdentifier}"`);
+      
+      if (!v2rayIdentifier) {
+        console.warn('[deleteDevice] V2Ray user record has neither userId nor name; skipping remote removal');
+      } else {
         try {
-          // Get the V2rayUser document to retrieve the device name
-          const v2rayUserDoc = await V2rayUser.findById(device.v2rayUser);
-          if (v2rayUserDoc) {
-            // Pass device name (email) to removeUser - this matches the client config
-            await vpnService.removeUser(v2rayUserDoc.name || v2rayUserDoc.userId);
-          }
+          console.log(`[deleteDevice] Calling vpnService.removeUser with identifier: "${v2rayIdentifier}"`);
+          const result = await vpnService.removeUser(v2rayIdentifier);
+          console.log(`[deleteDevice] V2Ray user removal result:`, JSON.stringify(result));
         } catch (error) {
-          console.error('Failed to remove V2Ray user:', error);
-          // Continue with deletion even if removal fails
+          console.error('[deleteDevice] Failed to remove V2Ray user:', error);
+          return res.status(500).json({ error: 'Failed to remove user from V2Ray server: ' + error.message });
         }
       }
+
+      await V2rayUser.findByIdAndDelete(v2rayUserDoc._id);
     }
 
     // Delete device from database

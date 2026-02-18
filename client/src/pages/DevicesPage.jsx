@@ -20,24 +20,43 @@ const DevicesPage = () => {
   const [migratingDevice, setMigratingDevice] = useState(null);
   const [selectedServerId, setSelectedServerId] = useState('');
   const [selectedServerType, setSelectedServerType] = useState(''); // Add server type filter
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalPages, setTotalPages] = useState(1);
+  const [totalDevices, setTotalDevices] = useState(0);
+  const [loadingStats, setLoadingStats] = useState(false);
+
+  useEffect(() => {
+    setCurrentPage(1); // Reset to page 1 when filters change
+  }, [selectedServerId, selectedServerType]);
 
   useEffect(() => {
     fetchData();
-  }, [selectedServerId, selectedServerType]); // Refetch when either filter changes
+  }, [selectedServerId, selectedServerType, currentPage]); // Refetch when filters or page changes
 
-  const fetchData = async () => {
+  const fetchData = async (withStats = false) => {
     try {
       setLoading(true);
+      if (withStats) setLoadingStats(true);
+      
       const [devicesResponse, serversResponse, plansResponse, usersResponse] = await Promise.all([
-        devicesAPI.getAll(selectedServerId || undefined),
+        devicesAPI.getAll(selectedServerId || undefined, undefined, { 
+          page: currentPage, 
+          limit: 50, 
+          includeStats: withStats 
+        }),
         serversAPI.getAll(),
         plansAPI.getAll(true),
         usersAPI.getAll().catch(() => ({ users: [] })), // Fetch users, but don't fail if it errors
       ]);
-      const devicesList = Array.isArray(devicesResponse) ? devicesResponse : devicesResponse?.devices || [];
+      
+      const devicesList = devicesResponse?.devices || [];
       const serversList = Array.isArray(serversResponse) ? serversResponse : serversResponse?.servers || [];
       const plansList = Array.isArray(plansResponse) ? plansResponse : plansResponse?.plans || [];
       const usersList = Array.isArray(usersResponse) ? usersResponse : usersResponse?.users || [];
+      
+      // Update pagination
+      setTotalPages(devicesResponse?.pages || 1);
+      setTotalDevices(devicesResponse?.total || devicesList.length);
       
       // Filter devices by server type if selected
       let filteredDevices = devicesList.filter(device => {
@@ -85,6 +104,45 @@ const DevicesPage = () => {
       console.error(err);
     } finally {
       setLoading(false);
+      if (withStats) setLoadingStats(false);
+    }
+  };
+
+  const handleRefreshStats = async () => {
+    if (devices.length === 0) return;
+    
+    try {
+      setLoadingStats(true);
+      const deviceIds = devices.map(d => d._id);
+      const response = await devicesAPI.bulkRefreshStats(deviceIds);
+      
+      // Update local devices with fresh stats
+      if (response.stats && Array.isArray(response.stats)) {
+        setDevices(prevDevices => 
+          prevDevices.map(device => {
+            const updated = response.stats.find(s => s.deviceId === device._id);
+            if (updated && updated.success && updated.stats) {
+              return {
+                ...device,
+                usage: {
+                  bytesSent: updated.stats.uplink || 0,
+                  bytesReceived: updated.stats.downlink || updated.stats.bytesUsed || 0,
+                  lastSync: new Date(),
+                },
+                totalBytesUsed: updated.stats.bytesUsed || 0
+              };
+            }
+            return device;
+          })
+        );
+      }
+    } catch (err) {
+      console.error('Failed to refresh stats:', err);
+      setError('Failed to refresh stats. Falling back to full reload...');
+      // Fallback: reload with stats
+      setTimeout(() => fetchData(true), 500);
+    } finally {
+      setLoadingStats(false);
     }
   };
 
@@ -222,6 +280,54 @@ const DevicesPage = () => {
             </option>
           ))}
         </select>
+      </div>
+
+      <div className="devices-toolbar" style={{ 
+        display: 'flex', 
+        justifyContent: 'space-between', 
+        alignItems: 'center', 
+        marginBottom: '20px',
+        padding: '10px',
+        backgroundColor: '#f5f5f5',
+        borderRadius: '8px'
+      }}>
+        <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
+          <button 
+            className="btn-secondary" 
+            onClick={handleRefreshStats}
+            disabled={loadingStats}
+            style={{ opacity: loadingStats ? 0.6 : 1 }}
+          >
+            {loadingStats ? '⏳ Loading Stats...' : '🔄 Refresh Stats'}
+          </button>
+          <span style={{ fontSize: '14px', color: '#666' }}>
+            Showing {devices.length} of {totalDevices} devices
+          </span>
+        </div>
+
+        {totalPages > 1 && (
+          <div className="pagination" style={{ display: 'flex', gap: '5px', alignItems: 'center' }}>
+            <button 
+              className="btn-secondary"
+              onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+              disabled={currentPage === 1 || loading}
+              style={{ padding: '5px 12px' }}
+            >
+              ← Prev
+            </button>
+            <span style={{ padding: '5px 15px', fontWeight: 'bold' }}>
+              Page {currentPage} of {totalPages}
+            </span>
+            <button 
+              className="btn-secondary"
+              onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+              disabled={currentPage === totalPages || loading}
+              style={{ padding: '5px 12px' }}
+            >
+              Next →
+            </button>
+          </div>
+        )}
       </div>
 
       <DeviceList
