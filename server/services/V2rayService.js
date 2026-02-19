@@ -32,6 +32,7 @@ class V2rayService extends VpnService {
   async makeRequest(method, path, body = null) {
     return new Promise((resolve, reject) => {
       if (!this.baseUrl) return reject(new Error('API base URL not configured'));
+
       // Normalize base URL / host and determine protocol/port
       let hostname = this.server.host;
       let port = this.v2ray.apiPort || (this.server.port || 80);
@@ -43,53 +44,71 @@ class V2rayService extends VpnService {
           port = this.v2ray.apiPort || (parsed.port ? parseInt(parsed.port, 10) : (parsed.protocol === 'http:' ? 80 : 443));
           useHttp = parsed.protocol === 'http:';
         } catch (e) {
-          // baseUrl may be a bare hostname
+          // baseUrl may be a bare hostname (no scheme)
           hostname = this.baseUrl || hostname;
           port = this.v2ray.apiPort || (this.server.port || 80);
         }
       }
 
-      const protocol = (hostname.includes('localhost') || hostname.includes('127.0.0.1') || useHttp) ? http : https;
+      // Helper to perform request; tryHttp override forces plain HTTP
+      const doRequest = (tryHttp) => {
+        const protocolModule = tryHttp ? http : https;
 
-      const options = {
-        hostname,
-        port,
-        path: path.startsWith('/') ? path : `/${path}`,
-        method,
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        timeout: this.requestTimeout,
-        rejectUnauthorized: (this.v2ray && this.v2ray.tlsVerify !== false),
+        const options = {
+          hostname,
+          port,
+          path: path.startsWith('/') ? path : `/${path}`,
+          method,
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          timeout: this.requestTimeout,
+        };
+
+        if (!tryHttp) {
+          options.rejectUnauthorized = (this.v2ray && this.v2ray.tlsVerify !== false);
+        }
+
+        if (this.apiToken) {
+          options.headers.Authorization = `Bearer ${this.apiToken}`;
+        }
+
+        const req = protocolModule.request(options, (res) => {
+          let data = '';
+          res.on('data', (chunk) => { data += chunk; });
+          res.on('end', () => {
+            try {
+              const parsed = data ? JSON.parse(data) : null;
+              if (res.statusCode >= 200 && res.statusCode < 300) return resolve(parsed);
+              return reject(new Error(`API Error (${res.statusCode}): ${data || 'No response'}`));
+            } catch (err) {
+              return reject(new Error(`Failed to parse API response: ${err.message}`));
+            }
+          });
+        });
+
+        req.on('error', (err) => {
+          const msg = err && err.message ? err.message : String(err);
+
+          // If HTTPS attempt failed due to SSL protocol/version mismatch, retry once over HTTP
+          if (!tryHttp && (err.code === 'EPROTO' || /wrong version number|ssl3_get_record|SSL routines/i.test(msg))) {
+            return doRequest(true);
+          }
+
+          if (err.code === 'ECONNREFUSED') return reject(new Error(`Cannot connect to v2ray API at ${options.hostname}:${options.port}`));
+          return reject(new Error(`Request failed: ${msg}`));
+        });
+
+        req.on('timeout', () => { req.destroy(); reject(new Error('Request timeout')); });
+
+        if (body) req.write(JSON.stringify(body));
+        req.end();
       };
 
-      if (this.apiToken) {
-        options.headers.Authorization = `Bearer ${this.apiToken}`;
-      }
-
-      const req = protocol.request(options, (res) => {
-        let data = '';
-        res.on('data', (chunk) => { data += chunk; });
-        res.on('end', () => {
-          try {
-            const parsed = data ? JSON.parse(data) : null;
-            if (res.statusCode >= 200 && res.statusCode < 300) return resolve(parsed);
-            return reject(new Error(`API Error (${res.statusCode}): ${data || 'No response'}`));
-          } catch (err) {
-            return reject(new Error(`Failed to parse API response: ${err.message}`));
-          }
-        });
-      });
-
-      req.on('error', (err) => {
-        if (err.code === 'ECONNREFUSED') reject(new Error(`Cannot connect to v2ray API at ${options.hostname}:${options.port}`));
-        else reject(new Error(`Request failed: ${err.message}`));
-      });
-
-      req.on('timeout', () => { req.destroy(); reject(new Error('Request timeout')); });
-
-      if (body) req.write(JSON.stringify(body));
-      req.end();
+      // Initial preference: if host is localhost/127.0.0.1, a bare IPv4 address, or baseUrl explicitly http, use HTTP
+      const isBareIPv4 = /^\d{1,3}(?:\.\d{1,3}){3}$/.test(hostname);
+      const preferHttp = useHttp || hostname.includes('localhost') || hostname.includes('127.0.0.1') || isBareIPv4 || port === 80;
+      doRequest(preferHttp);
     });
   }
 
