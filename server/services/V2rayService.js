@@ -77,12 +77,21 @@ class V2rayService extends VpnService {
           let data = '';
           res.on('data', (chunk) => { data += chunk; });
           res.on('end', () => {
-            try {
-              const parsed = data ? JSON.parse(data) : null;
-              if (res.statusCode >= 200 && res.statusCode < 300) return resolve(parsed);
+            // Try to parse JSON, but fall back to returning raw text when parsing fails.
+            if (res.statusCode < 200 || res.statusCode >= 300) {
+              // Non-2xx: return an error with body preserved
               return reject(new Error(`API Error (${res.statusCode}): ${data || 'No response'}`));
+            }
+
+            if (!data) return resolve(null);
+
+            try {
+              const parsed = JSON.parse(data);
+              return resolve(parsed);
             } catch (err) {
-              return reject(new Error(`Failed to parse API response: ${err.message}`));
+              // Not JSON — log and return raw text so callers can decide how to handle it
+              console.warn(`[V2rayService.makeRequest] Response not JSON for ${options.hostname}:${options.port}${options.path} — returning raw text`);
+              return resolve({ __raw: data });
             }
           });
         });

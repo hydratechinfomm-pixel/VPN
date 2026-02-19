@@ -23,7 +23,6 @@ const DevicesPage = () => {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [totalDevices, setTotalDevices] = useState(0);
-  const [loadingStats, setLoadingStats] = useState(false);
 
   useEffect(() => {
     setCurrentPage(1); // Reset to page 1 when filters change
@@ -33,16 +32,15 @@ const DevicesPage = () => {
     fetchData();
   }, [selectedServerId, selectedServerType, currentPage]); // Refetch when filters or page changes
 
-  const fetchData = async (withStats = false) => {
+  const fetchData = async () => {
     try {
       setLoading(true);
-      if (withStats) setLoadingStats(true);
       
       const [devicesResponse, serversResponse, plansResponse, usersResponse] = await Promise.all([
         devicesAPI.getAll(selectedServerId || undefined, undefined, { 
           page: currentPage, 
           limit: 50, 
-          includeStats: withStats 
+          includeStats: false 
         }),
         serversAPI.getAll(),
         plansAPI.getAll(true),
@@ -104,45 +102,6 @@ const DevicesPage = () => {
       console.error(err);
     } finally {
       setLoading(false);
-      if (withStats) setLoadingStats(false);
-    }
-  };
-
-  const handleRefreshStats = async () => {
-    if (devices.length === 0) return;
-    
-    try {
-      setLoadingStats(true);
-      const deviceIds = devices.map(d => d._id);
-      const response = await devicesAPI.bulkRefreshStats(deviceIds);
-      
-      // Update local devices with fresh stats
-      if (response.stats && Array.isArray(response.stats)) {
-        setDevices(prevDevices => 
-          prevDevices.map(device => {
-            const updated = response.stats.find(s => s.deviceId === device._id);
-            if (updated && updated.success && updated.stats) {
-              return {
-                ...device,
-                usage: {
-                  bytesSent: updated.stats.uplink || 0,
-                  bytesReceived: updated.stats.downlink || updated.stats.bytesUsed || 0,
-                  lastSync: new Date(),
-                },
-                totalBytesUsed: updated.stats.bytesUsed || 0
-              };
-            }
-            return device;
-          })
-        );
-      }
-    } catch (err) {
-      console.error('Failed to refresh stats:', err);
-      setError('Failed to refresh stats. Falling back to full reload...');
-      // Fallback: reload with stats
-      setTimeout(() => fetchData(true), 500);
-    } finally {
-      setLoadingStats(false);
     }
   };
 
@@ -292,14 +251,6 @@ const DevicesPage = () => {
         borderRadius: '8px'
       }}>
         <div style={{ display: 'flex', gap: '10px', alignItems: 'center' }}>
-          <button 
-            className="btn-secondary" 
-            onClick={handleRefreshStats}
-            disabled={loadingStats}
-            style={{ opacity: loadingStats ? 0.6 : 1 }}
-          >
-            {loadingStats ? '⏳ Loading Stats...' : '🔄 Refresh Stats'}
-          </button>
           <span style={{ fontSize: '14px', color: '#666' }}>
             Showing {devices.length} of {totalDevices} devices
           </span>
