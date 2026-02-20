@@ -67,7 +67,21 @@ const DeviceList = ({ devices, onEdit, onDelete, onDownloadConfig, onMigrate }) 
       alert(`✓ Device ${action} successfully!`);
       window.location.reload();
     } catch (err) {
-      alert('Failed to update device status: ' + (err.message || 'Unknown error'));
+      const payload = err?.response?.data || err || {};
+
+      if (payload.code === 'LIMIT_EXCEEDED') {
+        const usageText = formatBytes(payload.usage || 0);
+        const limitText = formatBytes(payload.limit || 0);
+        alert(`Cannot activate device: usage ${usageText} has reached limit ${limitText}. Please extend device/plan data limit first.`);
+        return;
+      }
+
+      const message =
+        payload.error
+        || payload.message
+        || err?.message
+        || 'Unknown error';
+      alert('Failed to update device status: ' + message);
     }
   };
 

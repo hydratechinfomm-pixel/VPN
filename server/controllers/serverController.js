@@ -572,6 +572,25 @@ exports.healthCheckServer = async (req, res) => {
     const vpnService = getVpnService(server);
     const isHealthy = await vpnService.checkHealth();
 
+    let healthMessage = isHealthy ? 'Server is healthy' : 'Server is not responding';
+    let healthMode = undefined;
+
+    if (server.vpnType === 'v2ray') {
+      healthMode = vpnService.accessMethod || server.v2ray?.accessMethod || 'api';
+
+      // Provide actionable diagnostics for SSH mode when unhealthy
+      if (!isHealthy && healthMode === 'ssh' && vpnService.executor) {
+        try {
+          const sshDiag = await vpnService.executor.testConnection();
+          if (sshDiag && sshDiag.success === false && sshDiag.error) {
+            healthMessage = `SSH health check failed: ${sshDiag.error}`;
+          }
+        } catch (diagError) {
+          // Keep generic message if diagnostic itself fails
+        }
+      }
+    }
+
     // Update server health status
     server.stats.isHealthy = isHealthy;
     server.stats.lastHealthCheck = new Date();
@@ -579,9 +598,10 @@ exports.healthCheckServer = async (req, res) => {
 
     res.json({
       vpnType: server.vpnType,
+      healthMode,
       isHealthy,
       lastCheck: server.stats.lastHealthCheck,
-      message: isHealthy ? 'Server is healthy' : 'Server is not responding',
+      message: healthMessage,
     });
   } catch (error) {
     console.error('[healthCheckServer] Error:', error);

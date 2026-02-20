@@ -44,6 +44,7 @@ const WireGuardService = require('../services/WireGuardService');
 const OutlineService = require('../services/OutlineService');
 const V2rayService = require('../services/V2rayService');
 const V2rayUser = require('../models/V2rayUser');
+const { formatBytes } = require('../utils/helpers');
 
 /**
  * Factory function to get the appropriate VPN service
@@ -437,7 +438,7 @@ exports.schedulePlanLimitEnforcement = () => {
                     newValue: 'SUSPENDED',
                   },
                   metadata: {
-                    notes: `Data limit ${limit} bytes exceeded (used: ${totalUsage} bytes)`,
+                    notes: `Data limit ${formatBytes(limit)} exceeded (used: ${formatBytes(totalUsage)})`,
                   },
                 });
               }
@@ -480,7 +481,7 @@ exports.schedulePlanLimitEnforcement = () => {
                       newValue: 'SUSPENDED',
                     },
                     metadata: {
-                      notes: `Data limit ${limit} bytes exceeded (used: ${totalUsage} bytes)`,
+                      notes: `Data limit ${formatBytes(limit)} exceeded (used: ${formatBytes(totalUsage)})`,
                     },
                   });
                 }
@@ -495,6 +496,36 @@ exports.schedulePlanLimitEnforcement = () => {
 
       if (disabledCount > 0) {
         console.log(`[Plan Enforcement] Disabled ${disabledCount} devices exceeding limits`);
+      }
+
+      // Reconciliation: enforce remote suspension for devices that are already
+      // marked SUSPENDED in DB (important after hotfixes or previous no-op suspend commands).
+      const suspendedV2rayDevices = await Device.find({
+        status: 'SUSPENDED',
+        isEnabled: false,
+      })
+        .populate('server')
+        .populate('v2rayUser');
+
+      let reconciledCount = 0;
+      for (const device of suspendedV2rayDevices) {
+        if (!device.server || device.server.vpnType !== 'v2ray' || !device.v2rayUser) continue;
+
+        try {
+          const server = await VpnServer.findById(device.server._id)
+            .select('+v2ray.apiToken +v2ray.ssh.privateKey');
+          if (!server || !server.v2ray) continue;
+
+          const v2Service = new V2rayService(server);
+          await v2Service.suspendUser(device.v2rayUser.userId, device.v2rayUser.name);
+          reconciledCount++;
+        } catch (error) {
+          console.error(`[Plan Enforcement] Reconcile suspend failed for V2Ray device ${device._id}:`, error.message);
+        }
+      }
+
+      if (reconciledCount > 0) {
+        console.log(`[Plan Enforcement] Reconciled remote suspension for ${reconciledCount} V2Ray devices`);
       }
     } catch (error) {
       console.error('[Plan Enforcement] Error:', error.message);

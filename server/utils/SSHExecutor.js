@@ -20,7 +20,33 @@ class SSHExecutor {
           // leave as-is; error will surface during connection attempt
         }
       }
+
+      // Normalize common storage formats:
+      // - JSON-escaped newlines ("\\n")
+      // - accidental surrounding quotes
+      // - leading/trailing whitespace
+      this.sshConfig.privateKey = this.normalizePrivateKey(this.sshConfig.privateKey);
     }
+  }
+
+  normalizePrivateKey(privateKey) {
+    if (!privateKey || typeof privateKey !== 'string') return privateKey;
+    let normalized = privateKey.trim();
+
+    // Remove wrapping quotes if present
+    if (
+      (normalized.startsWith('"') && normalized.endsWith('"'))
+      || (normalized.startsWith("'") && normalized.endsWith("'"))
+    ) {
+      normalized = normalized.slice(1, -1);
+    }
+
+    // Convert escaped newlines into real newlines
+    if (normalized.includes('\\n')) {
+      normalized = normalized.replace(/\\n/g, '\n');
+    }
+
+    return normalized.trim();
   }
 
   /**
@@ -39,6 +65,10 @@ class SSHExecutor {
 
       // Use password or private key
       if (this.sshConfig.privateKey) {
+        const key = this.sshConfig.privateKey;
+        if (typeof key !== 'string' || !/-----BEGIN [A-Z ]+PRIVATE KEY-----/.test(key)) {
+          return reject(new Error('SSH private key format is invalid. Re-save the private key in server settings, or verify ENCRYPTION_KEY matches the key used when the server record was saved.'));
+        }
         config.privateKey = this.sshConfig.privateKey;
       } else if (this.sshConfig.password) {
         config.password = this.sshConfig.password;

@@ -170,7 +170,7 @@ const ServerForm = ({ server, onSubmit, onCancel }) => {
         }
       }
 
-      if (formData.v2rayApiBaseUrl) {
+      if (formData.v2rayAccessMethod !== 'ssh' && formData.v2rayApiBaseUrl) {
         try {
           // basic URL validation
           // eslint-disable-next-line no-new

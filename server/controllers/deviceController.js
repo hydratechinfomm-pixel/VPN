@@ -1416,6 +1416,14 @@ exports.toggleDeviceStatus = async (req, res) => {
     const server = device.server;
     const vpnService = getVpnService(server);
 
+    // Compute usage/limit from DB (no live server call here)
+    const totalUsage = (device.usage?.bytesSent || 0) + (device.usage?.bytesReceived || 0);
+    const effectiveLimit =
+      (device.dataLimit?.isEnabled && typeof device.dataLimit?.bytes === 'number'
+        ? device.dataLimit.bytes
+        : null)
+      ?? (device.plan?.dataLimit?.bytes ?? null);
+
     // Capture old values BEFORE making changes (for history logging)
     const oldStatus = device.status;
     const oldIsEnabled = device.isEnabled;
@@ -1426,6 +1434,23 @@ exports.toggleDeviceStatus = async (req, res) => {
       if (!validStatuses.includes(status)) {
         return res.status(400).json({ error: 'Invalid status' });
       }
+
+      // Prevent re-activation when current usage already reached/exceeded effective limit.
+      // User must extend plan/device limit first (e.g. 1GB -> 100GB).
+      if (
+        status === 'ACTIVE'
+        && effectiveLimit !== null
+        && effectiveLimit > 0
+        && totalUsage >= effectiveLimit
+      ) {
+        return res.status(400).json({
+          error: `Cannot activate device: usage ${totalUsage} has reached/exceeded limit ${effectiveLimit}. Extend device/plan data limit first.`,
+          code: 'LIMIT_EXCEEDED',
+          usage: totalUsage,
+          limit: effectiveLimit,
+        });
+      }
+
       device.status = status;
 
       // Status is source of truth for enabled state.
@@ -1442,6 +1467,20 @@ exports.toggleDeviceStatus = async (req, res) => {
     const effectiveIsEnabled = status
       ? (status === 'ACTIVE')
       : (isEnabled !== undefined ? !!isEnabled : undefined);
+
+    if (
+      effectiveIsEnabled === true
+      && effectiveLimit !== null
+      && effectiveLimit > 0
+      && totalUsage >= effectiveLimit
+    ) {
+      return res.status(400).json({
+        error: `Cannot enable device: usage ${totalUsage} has reached/exceeded limit ${effectiveLimit}. Extend device/plan data limit first.`,
+        code: 'LIMIT_EXCEEDED',
+        usage: totalUsage,
+        limit: effectiveLimit,
+      });
+    }
 
     // Handle pause/resume for V2Ray (similar to Outline)
     if (server.vpnType === 'v2ray') {
