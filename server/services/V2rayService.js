@@ -33,31 +33,105 @@ class V2rayService extends VpnService {
     return new Promise((resolve, reject) => {
       if (!this.baseUrl) return reject(new Error('API base URL not configured'));
 
-      // Normalize base URL / host and determine protocol/port
+      // Normalize base URL / host and determine protocol/port/path.
+      // Supports:
+      // - bare host/IP (e.g. 1.2.3.4)
+      // - full URL with scheme/port/path (e.g. https://example.com/panel/api)
       let hostname = this.server.host;
-      let port = this.v2ray.apiPort || (this.server.port || 80);
-      let useHttp = false;
-      if (this.baseUrl) {
+      let basePath = '';
+      let explicitProtocol = null;
+      let explicitPort = null;
+      let parsedBase = null;
+
+      try {
+        parsedBase = new URL(this.baseUrl);
+      } catch (e) {
         try {
-          const parsed = new URL(this.baseUrl);
-          hostname = parsed.hostname || hostname;
-          port = this.v2ray.apiPort || (parsed.port ? parseInt(parsed.port, 10) : (parsed.protocol === 'http:' ? 80 : 443));
-          useHttp = parsed.protocol === 'http:';
-        } catch (e) {
-          // baseUrl may be a bare hostname (no scheme)
-          hostname = this.baseUrl || hostname;
-          port = this.v2ray.apiPort || (this.server.port || 80);
+          // allow parsing bare host/path by injecting temporary scheme
+          parsedBase = new URL(`http://${this.baseUrl}`);
+        } catch (e2) {
+          parsedBase = null;
         }
       }
 
-      // Helper to perform request; tryHttp override forces plain HTTP
-      const doRequest = (tryHttp) => {
-        const protocolModule = tryHttp ? http : https;
+      if (parsedBase) {
+        hostname = parsedBase.hostname || hostname;
+        basePath = parsedBase.pathname && parsedBase.pathname !== '/' ? parsedBase.pathname.replace(/\/+$/, '') : '';
+        if (/^https?:$/i.test(parsedBase.protocol)) {
+          explicitProtocol = parsedBase.protocol.toLowerCase() === 'http:' ? 'http' : 'https';
+        }
+        if (parsedBase.port) {
+          const parsedPort = parseInt(parsedBase.port, 10);
+          if (!Number.isNaN(parsedPort)) explicitPort = parsedPort;
+        }
+      } else {
+        hostname = this.baseUrl || hostname;
+      }
+
+      const configuredPort = Number(this.v2ray.apiPort);
+      const hasConfiguredPort = Number.isFinite(configuredPort) && configuredPort > 0;
+
+      // Historical data often stores default apiPort=8080 even when apiBaseUrl is https://host.
+      // If URL has explicit scheme but no explicit port and configuredPort is the default 8080,
+      // prefer scheme default first and keep 8080 as fallback.
+      const shouldUseSchemeDefaultFirst = !!(explicitProtocol && explicitPort === null && configuredPort === 8080);
+
+      const normalizePath = (requestPath) => {
+        const right = requestPath.startsWith('/') ? requestPath : `/${requestPath}`;
+        if (!basePath) return right;
+        return `${basePath}${right}`;
+      };
+
+      const attempts = [];
+      const addAttempt = (protocol, port) => {
+        if (!protocol || !port) return;
+        const key = `${protocol}:${port}`;
+        if (!attempts.find(a => a.key === key)) {
+          attempts.push({ key, protocol, port });
+        }
+      };
+
+      if (explicitProtocol) {
+        const preferredPort = explicitPort
+          || (shouldUseSchemeDefaultFirst
+            ? (explicitProtocol === 'http' ? 80 : 443)
+            : (hasConfiguredPort ? configuredPort : (explicitProtocol === 'http' ? 80 : 443)));
+
+        addAttempt(explicitProtocol, preferredPort);
+
+        // Fallbacks for scheme/port mismatches
+        if (hasConfiguredPort && configuredPort !== preferredPort) {
+          addAttempt(explicitProtocol, configuredPort);
+        }
+        addAttempt(explicitProtocol === 'http' ? 'https' : 'http', hasConfiguredPort ? configuredPort : (explicitProtocol === 'http' ? 443 : 80));
+        addAttempt(explicitProtocol === 'http' ? 'https' : 'http', explicitProtocol === 'http' ? 443 : 80);
+      } else {
+        const candidatePort = hasConfiguredPort ? configuredPort : (this.server.port || 80);
+        const preferHttp = hostname.includes('localhost') || hostname.includes('127.0.0.1') || /^\d{1,3}(?:\.\d{1,3}){3}$/.test(hostname);
+
+        if (preferHttp) {
+          addAttempt('http', candidatePort);
+          addAttempt('https', candidatePort);
+        } else {
+          addAttempt('https', candidatePort);
+          addAttempt('http', candidatePort);
+        }
+        addAttempt('http', 80);
+        addAttempt('https', 443);
+      }
+
+      const tryAttempt = (index) => {
+        if (index >= attempts.length) {
+          return reject(new Error(`Cannot connect to v2ray API at ${hostname} using HTTP/HTTPS`));
+        }
+
+        const current = attempts[index];
+        const protocolModule = current.protocol === 'http' ? http : https;
 
         const options = {
           hostname,
-          port,
-          path: path.startsWith('/') ? path : `/${path}`,
+          port: current.port,
+          path: normalizePath(path),
           method,
           headers: {
             'Content-Type': 'application/json',
@@ -65,7 +139,7 @@ class V2rayService extends VpnService {
           timeout: this.requestTimeout,
         };
 
-        if (!tryHttp) {
+        if (current.protocol === 'https') {
           options.rejectUnauthorized = (this.v2ray && this.v2ray.tlsVerify !== false);
         }
 
@@ -99,25 +173,29 @@ class V2rayService extends VpnService {
         req.on('error', (err) => {
           const msg = err && err.message ? err.message : String(err);
 
-          // If HTTPS attempt failed due to SSL protocol/version mismatch, retry once over HTTP
-          if (!tryHttp && (err.code === 'EPROTO' || /wrong version number|ssl3_get_record|SSL routines/i.test(msg))) {
-            return doRequest(true);
+          // Protocol/connection mismatch, try the next protocol/port candidate.
+          if (
+            err.code === 'ECONNREFUSED'
+            || err.code === 'ECONNRESET'
+            || err.code === 'ETIMEDOUT'
+            || err.code === 'EPROTO'
+            || /wrong version number|ssl3_get_record|SSL routines|socket hang up/i.test(msg)
+          ) {
+            return tryAttempt(index + 1);
           }
 
-          if (err.code === 'ECONNREFUSED') return reject(new Error(`Cannot connect to v2ray API at ${options.hostname}:${options.port}`));
           return reject(new Error(`Request failed: ${msg}`));
         });
 
-        req.on('timeout', () => { req.destroy(); reject(new Error('Request timeout')); });
+        req.on('timeout', () => {
+          req.destroy(new Error('Request timeout'));
+        });
 
         if (body) req.write(JSON.stringify(body));
         req.end();
       };
 
-      // Initial preference: if host is localhost/127.0.0.1, a bare IPv4 address, or baseUrl explicitly http, use HTTP
-      const isBareIPv4 = /^\d{1,3}(?:\.\d{1,3}){3}$/.test(hostname);
-      const preferHttp = useHttp || hostname.includes('localhost') || hostname.includes('127.0.0.1') || isBareIPv4 || port === 80;
-      doRequest(preferHttp);
+      tryAttempt(0);
     });
   }
 
@@ -126,18 +204,16 @@ class V2rayService extends VpnService {
       const result = await this.executor.testConnection();
       return result.success;
     }
-    try {
-      // Try /status or /health endpoints if server supports them
-      const resp = await this.makeRequest('GET', 'status');
-      return !!resp;
-    } catch (err) {
+    const healthPaths = ['status', 'health', ''];
+    for (const healthPath of healthPaths) {
       try {
-        const resp = await this.makeRequest('GET', 'health');
+        const resp = await this.makeRequest('GET', healthPath);
         return !!resp;
-      } catch (err2) {
-        return false;
+      } catch (err) {
+        // try next endpoint
       }
     }
+    return false;
   }
 
   async addUser(userData) {
