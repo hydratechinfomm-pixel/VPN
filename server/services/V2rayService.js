@@ -443,6 +443,80 @@ class V2rayService extends VpnService {
     throw new Error(lastError || 'No VMess inbound found in any config; cannot add user');
   }
 
+  async ensureUserRemovedFromConfig(userId, name) {
+    if (!userId && !name) return { changed: false, reason: 'missing-user-id-and-name' };
+    const configPaths = await this.resolveRemoteConfigPaths();
+    if (!configPaths.length) throw new Error('Unable to locate V2Ray/Xray config.json on remote host');
+
+    let lastError = null;
+    for (const configPath of configPaths) {
+      const configContent = await this.readRemoteFile(configPath);
+      let config;
+      try {
+        config = JSON.parse(configContent);
+      } catch (e) {
+        lastError = `Failed to parse remote config JSON at ${configPath}: ${e.message}`;
+        continue;
+      }
+
+      const inbound = Array.isArray(config.inbounds)
+        ? config.inbounds.find((inb) => inb?.protocol === 'vmess' || Array.isArray(inb?.settings?.clients))
+        : null;
+
+      if (!inbound || !inbound.settings) {
+        lastError = `No VMess inbound found in config at ${configPath}`;
+        continue;
+      }
+
+      inbound.settings.clients = Array.isArray(inbound.settings.clients) ? inbound.settings.clients : [];
+
+      const beforeCount = inbound.settings.clients.length;
+      inbound.settings.clients = inbound.settings.clients.filter((client) => {
+        if (!client) return false;
+        const byId = userId && String(client.id) === String(userId);
+        const byName = name && String(client.email) === String(name);
+        return !(byId || byName);
+      });
+
+      const removedCount = beforeCount - inbound.settings.clients.length;
+      if (removedCount <= 0) {
+        return { changed: false, reason: 'not-found', configPath };
+      }
+
+      const updated = JSON.stringify(config, null, 2);
+      await this.writeRemoteFile(configPath, updated);
+      await this.restartRemoteService(configPath);
+      return { changed: true, removedCount, configPath };
+    }
+
+    throw new Error(lastError || 'No VMess inbound found in any config; cannot remove user');
+  }
+
+  async suspendUser(userId, name) {
+    if (!userId && !name) throw new Error('User id or name required');
+
+    if (this.accessMethod === 'ssh' && this.executor) {
+      return this.ensureUserRemovedFromConfig(userId, name);
+    }
+
+    // API fallback (if available)
+    const identifier = name || userId;
+    return this.setDataLimit(identifier, 0);
+  }
+
+  async resumeUser(userId, name) {
+    if (!userId && !name) throw new Error('User id or name required');
+
+    if (this.accessMethod === 'ssh' && this.executor) {
+      if (!userId) throw new Error('User id required to resume SSH-managed V2Ray user');
+      return this.ensureUserInConfig(userId, name);
+    }
+
+    // API fallback (if available)
+    const identifier = name || userId;
+    return this.setDataLimit(identifier, null);
+  }
+
   async resolveRemoteConfigPaths() {
     const candidates = [
       this.v2ray?.configPath,

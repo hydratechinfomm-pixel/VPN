@@ -326,10 +326,9 @@ exports.scheduleDeviceExpiration = () => {
               const v2Service = new (require('../services/V2rayService'))(server);
               const v2user = await require('../models/V2rayUser').findById(device.v2rayUser);
               if (v2user) {
-                // V2Ray expects device name (email) not UUID for suspension
-                const suspendIdentifier = v2user.name || v2user.userId;
-                console.log(`[Device Expiration] Suspending V2Ray user: device=${device.name}, identifier=${suspendIdentifier}`);
-                await v2Service.setDataLimit(suspendIdentifier, 0);
+                  const suspendIdentifier = v2user.name || v2user.userId;
+                  console.log(`[Device Expiration] Suspending V2Ray user: device=${device.name}, identifier=${suspendIdentifier}`);
+                  await v2Service.suspendUser(v2user.userId, v2user.name);
                 device.dataLimit = { bytes: 1, isEnabled: true };
                 await device.save();
                 console.log(`[Device Expiration] Successfully paused V2Ray user for device ${device.name}`);
@@ -462,10 +461,9 @@ exports.schedulePlanLimitEnforcement = () => {
                 const v2Service = new (require('../services/V2rayService'))(server);
                 const v2user = await require('../models/V2rayUser').findById(device.v2rayUser);
                 if (v2user) {
-                  // V2Ray expects device name (email) not UUID for suspension
                   const suspendIdentifier = v2user.name || v2user.userId;
                   console.log(`[Plan Enforcement] Suspending V2Ray user: device=${device.name}, identifier=${suspendIdentifier}, bytesUsed=${(device.usage.bytesSent || 0) + (device.usage.bytesReceived || 0)}`);
-                  await v2Service.setDataLimit(suspendIdentifier, 0);
+                  await v2Service.suspendUser(v2user.userId, v2user.name);
                   console.log(`[Plan Enforcement] Successfully paused V2Ray user for device ${device.name}`);
                   // Update V2rayUser status
                   v2user.status = 'SUSPENDED';

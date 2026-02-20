@@ -60,7 +60,8 @@ const DeviceList = ({ devices, onEdit, onDelete, onDownloadConfig, onMigrate }) 
 
   const handleToggleStatus = async (device, newStatus) => {
     try {
-      await devicesAPI.toggleStatus(device._id, newStatus, device.isEnabled);
+      const targetEnabled = newStatus === 'ACTIVE';
+      await devicesAPI.toggleStatus(device._id, newStatus, targetEnabled);
       // Show success message based on action
       const action = newStatus === 'SUSPENDED' ? 'suspended' : 'activated';
       alert(`✓ Device ${action} successfully!`);

@@ -1427,6 +1427,61 @@ exports.toggleDeviceStatus = async (req, res) => {
         return res.status(400).json({ error: 'Invalid status' });
       }
       device.status = status;
+
+      // Status is source of truth for enabled state.
+      // Prevent contradictory payloads like { status: 'SUSPENDED', isEnabled: true }.
+      if (status === 'ACTIVE') {
+        device.isEnabled = true;
+      } else {
+        device.isEnabled = false;
+      }
+    }
+
+    // Determine effective enable/disable request.
+    // If status is provided, it takes priority over isEnabled.
+    const effectiveIsEnabled = status
+      ? (status === 'ACTIVE')
+      : (isEnabled !== undefined ? !!isEnabled : undefined);
+
+    // Handle pause/resume for V2Ray (similar to Outline)
+    if (server.vpnType === 'v2ray') {
+      if (device.v2rayUser) {
+        const v2user = await V2rayUser.findById(device.v2rayUser);
+        if (v2user) {
+          try {
+            const fullServer = await VpnServer.findById(server._id)
+              .select('+v2ray.apiToken +v2ray.ssh.privateKey');
+            const v2Service = new V2rayService(fullServer || server);
+
+            let shouldPause = false;
+            let shouldResume = false;
+
+            if (status) {
+              shouldPause = status === 'SUSPENDED' || status === 'DISABLED' || status === 'EXPIRED';
+              shouldResume = status === 'ACTIVE';
+            } else if (effectiveIsEnabled !== undefined) {
+              shouldPause = !effectiveIsEnabled;
+              shouldResume = effectiveIsEnabled;
+            }
+
+            const suspendIdentifier = v2user.name || v2user.userId;
+            if (suspendIdentifier && shouldPause) {
+              await v2Service.suspendUser(v2user.userId, v2user.name);
+              v2user.status = 'SUSPENDED';
+              console.log(`[toggleDeviceStatus] Suspended V2Ray user ${suspendIdentifier}`);
+            } else if (suspendIdentifier && shouldResume) {
+              await v2Service.resumeUser(v2user.userId, v2user.name);
+              v2user.status = 'ACTIVE';
+              console.log(`[toggleDeviceStatus] Resumed V2Ray user ${suspendIdentifier}`);
+            }
+
+            await v2user.save();
+          } catch (error) {
+            console.error('Failed to pause/resume V2Ray user:', error.message);
+            throw new Error(`Failed to update V2Ray user: ${error.message}`);
+          }
+        }
+      }
     }
 
     // Handle enable/disable and status changes for Outline
@@ -1546,11 +1601,11 @@ exports.toggleDeviceStatus = async (req, res) => {
     }
 
     // Handle enable/disable for WireGuard
-    if (isEnabled !== undefined) {
-      device.isEnabled = isEnabled;
+    if (effectiveIsEnabled !== undefined) {
+      device.isEnabled = effectiveIsEnabled;
       
       if (server.vpnType === 'wireguard') {
-        if (!isEnabled) {
+        if (!effectiveIsEnabled) {
           // If disabling, remove peer temporarily
           try {
             await vpnService.removePeer(device.publicKey);
@@ -1584,12 +1639,12 @@ exports.toggleDeviceStatus = async (req, res) => {
       historyField = 'status';
       historyOldValue = oldStatus;
       historyNewValue = status;
-    } else if (isEnabled !== undefined) {
+    } else if (effectiveIsEnabled !== undefined) {
       // Only use isEnabled if status is not provided
-      historyAction = isEnabled ? 'ENABLED' : 'DISABLED';
+      historyAction = effectiveIsEnabled ? 'ENABLED' : 'DISABLED';
       historyField = 'isEnabled';
       historyOldValue = oldIsEnabled;
-      historyNewValue = isEnabled;
+      historyNewValue = effectiveIsEnabled;
     } else {
       // No changes made, skip history logging
       return res.json({
