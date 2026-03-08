@@ -25,8 +25,26 @@ function getVpnService(server) {
  */
 exports.getAllServers = async (req, res) => {
   try {
+    const User = require('../models/User');
     const { region, provider, isActive, vpnType } = req.query;
     const query = {};
+
+    const requester = await User.findById(req.userId).select('role allowedServers');
+    if (!requester) {
+      return res.status(401).json({ error: 'User not found' });
+    }
+
+    const isAdmin = requester.role?.toLowerCase() === constants.ROLES.ADMIN;
+    const isStaff = requester.role?.toLowerCase() === constants.ROLES.staff;
+
+    // Staff can only see servers explicitly assigned to them.
+    if (isStaff && !isAdmin) {
+      const allowedServerIds = (requester.allowedServers || []).map((id) => id.toString());
+      if (allowedServerIds.length === 0) {
+        return res.json({ total: 0, servers: [] });
+      }
+      query._id = { $in: allowedServerIds };
+    }
 
     if (region) query.region = region;
     if (provider) query.provider = provider;
@@ -271,6 +289,8 @@ exports.createServer = async (req, res) => {
     try {
       const isHealthy = await vpnService.checkHealth();
       if (!isHealthy) {
+        const healthError = vpnService.lastHealthError || null;
+
         // If SSH access was selected, request a diagnostic from the SSH executor (if available)
         if (vpnService.accessMethod === 'ssh' && vpnService.executor) {
           const sshResult = await vpnService.executor.testConnection();
@@ -302,7 +322,9 @@ exports.createServer = async (req, res) => {
         }
 
         return res.status(400).json({
-          error: `Cannot connect to ${vpnType} server. Please verify the connection details.`,
+          error: healthError
+            ? `Cannot connect to ${vpnType} server. ${healthError}`
+            : `Cannot connect to ${vpnType} server. Please verify the connection details.`,
         });
       }
     } catch (error) {

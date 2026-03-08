@@ -25,34 +25,52 @@ class OutlineService extends VpnService {
   }
 
   /**
-   * Make HTTPS/HTTP request to Outline API
-   * Outline API format: /{adminAccessKey}/{endpoint}
+   * Normalize configured host and infer protocol preference.
    */
-  async makeRequest(method, path, body = null) {
-    return new Promise((resolve, reject) => {
-      // Use http for localhost, https for remote servers
-      const isLocal = (this.baseUrl || this.server.host).includes('localhost') || 
-                      (this.baseUrl || this.server.host).includes('127.0.0.1');
-      const protocol = isLocal ? http : https;
+  resolveConnectionConfig() {
+    const rawHost = String(this.baseUrl || this.server.host || '').trim();
+    let hostname = rawHost;
+    let protocolHint = null;
+    let portHint = null;
 
-      const options = {
-        hostname: this.baseUrl || this.server.host,
-        port: this.apiPort,
-        path: `/${this.adminAccessKey}/${path}`,
-        method: method,
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        rejectUnauthorized: false, // Handle self-signed cert
-        timeout: this.requestTimeout,
+    if (/^https?:\/\//i.test(rawHost)) {
+      try {
+        const parsed = new URL(rawHost);
+        hostname = parsed.hostname;
+        protocolHint = parsed.protocol.replace(':', '').toLowerCase();
+        portHint = parsed.port ? parseInt(parsed.port, 10) : null;
+      } catch (err) {
+        // Keep raw host if parsing fails; request errors will be surfaced by makeRequest.
+      }
+    }
+
+    const isLocal = hostname.includes('localhost') || hostname.includes('127.0.0.1');
+    const port = this.apiPort || portHint || 8081;
+
+    // If protocol is explicitly provided, trust it. Otherwise prefer HTTPS for remote hosts,
+    // but fall back to HTTP to support deployments using HTTP wrappers on custom ports.
+    let protocols;
+    if (protocolHint) {
+      protocols = [protocolHint];
+    } else if (isLocal) {
+      protocols = ['http', 'https'];
+    } else {
+      protocols = ['https', 'http'];
+    }
+
+    return { hostname, port, protocols };
+  }
+
+  makeSingleRequest(protocolName, options, body) {
+    return new Promise((resolve, reject) => {
+      const protocol = protocolName === 'http' ? http : https;
+      const requestOptions = {
+        ...options,
+        rejectUnauthorized: protocolName === 'https' ? false : undefined,
       };
 
       let timedOut = false;
-      // console.log('Options:', options);
-      // console.log('path: ${path}', path);
-      // console.log('method: ${method}', method);
-      // console.log('body: ${body}', body);
-      const req = protocol.request(options, (res) => {
+      const req = protocol.request(requestOptions, (res) => {
         let data = '';
         res.on('data', (chunk) => {
           data += chunk;
@@ -75,11 +93,11 @@ class OutlineService extends VpnService {
       req.on('error', (err) => {
         if (timedOut) return;
         if (err.code === 'ECONNREFUSED') {
-          reject(new Error(`Cannot connect to Outline server at ${options.hostname}:${options.port}. Check host/port configuration.`));
+          reject(new Error(`Cannot connect to Outline server at ${requestOptions.hostname}:${requestOptions.port}. Check host/port configuration.`));
         } else if (err.code === 'ETIMEDOUT' || err.code === 'ESOCKETTIMEDOUT') {
-          reject(new Error(`Connection timeout. Outline server at ${options.hostname}:${options.port} is not responding.`));
+          reject(new Error(`Connection timeout. Outline server at ${requestOptions.hostname}:${requestOptions.port} is not responding.`));
         } else if (err.code === 'ENOTFOUND') {
-          reject(new Error(`Host not found: ${options.hostname}. Check hostname/IP address.`));
+          reject(new Error(`Host not found: ${requestOptions.hostname}. Check hostname/IP address.`));
         } else {
           reject(new Error(`Request failed: ${err.message}`));
         }
@@ -88,7 +106,7 @@ class OutlineService extends VpnService {
       req.on('timeout', () => {
         timedOut = true;
         req.destroy();
-        reject(new Error(`Request timeout: Outline server at ${options.hostname}:${options.port} is not responding within ${this.requestTimeout}ms`));
+        reject(new Error(`Request timeout: Outline server at ${requestOptions.hostname}:${requestOptions.port} is not responding within ${this.requestTimeout}ms`));
       });
 
       if (body) {
@@ -96,6 +114,40 @@ class OutlineService extends VpnService {
       }
       req.end();
     });
+  }
+
+  /**
+   * Make HTTPS/HTTP request to Outline API
+   * Outline API format: /{adminAccessKey}/{endpoint}
+   */
+  async makeRequest(method, path, body = null) {
+    const { hostname, port, protocols } = this.resolveConnectionConfig();
+    const options = {
+      hostname,
+      port,
+      path: `/${this.adminAccessKey}/${path}`,
+      method,
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      timeout: this.requestTimeout,
+    };
+
+    const errors = [];
+    for (const protocolName of protocols) {
+      try {
+        return await this.makeSingleRequest(protocolName, options, body);
+      } catch (err) {
+        errors.push(`${protocolName.toUpperCase()}: ${err.message}`);
+
+        // API response means endpoint is reachable; don't mask with protocol retries.
+        if (/^API Error \(\d+\):/.test(err.message)) {
+          throw err;
+        }
+      }
+    }
+
+    throw new Error(errors.join(' | '));
   }
 
   /**
@@ -338,9 +390,11 @@ class OutlineService extends VpnService {
     try {
       console.log(`[OutlineService] Checking health for server at ${this.baseUrl || this.server.host}:${this.apiPort}`);
       await this.getServerInfo();
+      this.lastHealthError = null;
       console.log(`[OutlineService] Health check passed`);
       return true;
     } catch (error) {
+      this.lastHealthError = error.message;
       console.error(`[OutlineService] Health check failed: ${error.message}`);
       return false;
     }

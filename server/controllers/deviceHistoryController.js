@@ -12,7 +12,7 @@ exports.getDeviceHistory = async (req, res) => {
     const userId = req.userId;
 
     // Check if device exists and user has access
-    const device = await Device.findById(deviceId);
+    const device = await Device.findById(deviceId).select('name user server');
     if (!device) {
       return res.status(404).json({ error: 'Device not found' });
     }
@@ -22,8 +22,10 @@ exports.getDeviceHistory = async (req, res) => {
     const isAdmin = user.role?.toLowerCase() === 'admin';
     const isstaff = user.role?.toLowerCase() === 'staff';
     const isOwner = device.user && device.user.toString() === userId;
+    const allowedServerIds = (user.allowedServers || []).map((id) => id.toString());
+    const isStaffAllowed = isstaff && allowedServerIds.includes(String(device.server));
 
-    if (!isAdmin && !isstaff && !isOwner) {
+    if (!isAdmin && !isStaffAllowed && !isOwner) {
       return res.status(403).json({ error: 'Access denied' });
     }
 
@@ -111,6 +113,39 @@ exports.getAllHistory = async (req, res) => {
 
     // Build query
     const query = {};
+    const allowedServerIds = (requester.allowedServers || []).map((id) => id.toString());
+    let staffScopedDeviceIds = null;
+
+    if (isstaff && !isAdmin) {
+      if (allowedServerIds.length === 0) {
+        return res.json({
+          history: [],
+          pagination: {
+            page: pageNum,
+            limit: limitNum,
+            total: 0,
+            pages: 0,
+          }
+        });
+      }
+
+      const scopedDevices = await Device.find({
+        server: { $in: allowedServerIds },
+      }).select('_id');
+
+      staffScopedDeviceIds = scopedDevices.map((d) => d._id);
+      if (staffScopedDeviceIds.length === 0) {
+        return res.json({
+          history: [],
+          pagination: {
+            page: pageNum,
+            limit: limitNum,
+            total: 0,
+            pages: 0,
+          }
+        });
+      }
+    }
     
     // User filter
     if (userId && typeof userId === 'string' && userId.trim()) {
@@ -155,13 +190,32 @@ exports.getAllHistory = async (req, res) => {
       if (!mongoose.Types.ObjectId.isValid(trimmedDeviceId)) {
         return res.status(400).json({ error: 'Invalid deviceId' });
       }
+
+      if (staffScopedDeviceIds && !staffScopedDeviceIds.some((id) => String(id) === trimmedDeviceId)) {
+        return res.json({
+          history: [],
+          pagination: {
+            page: pageNum,
+            limit: limitNum,
+            total: 0,
+            pages: 0,
+          }
+        });
+      }
+
       // If specific deviceId is provided, use it directly
       query.device = new mongoose.Types.ObjectId(trimmedDeviceId);
     } else if (deviceName && typeof deviceName === 'string' && deviceName.trim()) {
       // Only use deviceName filter if deviceId is not provided
-      const matchingDevices = await Device.find({ 
-        name: { $regex: deviceName.trim(), $options: 'i' } 
-      });
+      const deviceNameQuery = {
+        name: { $regex: deviceName.trim(), $options: 'i' }
+      };
+
+      if (staffScopedDeviceIds) {
+        deviceNameQuery._id = { $in: staffScopedDeviceIds };
+      }
+
+      const matchingDevices = await Device.find(deviceNameQuery);
       const deviceIds = matchingDevices.map(d => d._id);
       if (deviceIds.length > 0) {
         query.device = { $in: deviceIds };
@@ -177,6 +231,9 @@ exports.getAllHistory = async (req, res) => {
           }
         });
       }
+    } else if (staffScopedDeviceIds) {
+      // Staff without device filter: scope to all devices from assigned servers.
+      query.device = { $in: staffScopedDeviceIds };
     }
 
     const skip = (pageNum - 1) * limitNum;

@@ -513,8 +513,36 @@ exports.getDevices = async (req, res) => {
     // Role-based filtering
     const isAdmin = user.role?.toLowerCase() === 'admin';
     const isstaff = user.role?.toLowerCase() === 'staff';
-    
-    if (!isAdmin && !isstaff) {
+
+    if (isstaff && !isAdmin) {
+      // Staff can only see devices from servers assigned in allowedServers.
+      const allowedServerIds = (user.allowedServers || []).map((id) => id.toString());
+      if (allowedServerIds.length === 0) {
+        return res.json({
+          devices: [],
+          total: 0,
+          page: parseInt(page),
+          limit: parseInt(limit),
+          pages: 0,
+          statsIncluded: includeStats === 'true',
+        });
+      }
+
+      if (serverId && !allowedServerIds.includes(String(serverId))) {
+        return res.json({
+          devices: [],
+          total: 0,
+          page: parseInt(page),
+          limit: parseInt(limit),
+          pages: 0,
+          statsIncluded: includeStats === 'true',
+        });
+      }
+
+      query.server = query.server
+        ? query.server
+        : { $in: allowedServerIds };
+    } else if (!isAdmin && !isstaff) {
       // Regular users only see their assigned devices
       query.user = userId;
     }
